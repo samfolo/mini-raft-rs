@@ -20,6 +20,8 @@ pub struct Server {
     id: uuid::Uuid,
     #[allow(unused)]
     state: ServerState,
+    /// Latest term Server has seen. Iinitialised to 0 on first boot,
+    /// increases monotonically.
     current_term: usize,
     publisher: broadcast::Sender<rpc::ServerRequest>,
     #[allow(unused)]
@@ -40,7 +42,7 @@ impl Server {
         Self {
             id: uuid::Uuid::new_v4(),
             state: ServerState::Follower,
-            current_term: 1,
+            current_term: 0,
             publisher,
             subscriber,
         }
@@ -105,7 +107,7 @@ impl Server {
 }
 
 impl cluster_node::ClusterNode for Server {
-    async fn run(&mut self) -> Result<(), broadcast::error::RecvError> {
+    async fn run(&mut self) -> Result<uuid::Uuid, broadcast::error::RecvError> {
         loop {
             match self.subscriber.recv().await {
                 Ok(_) => todo!("unimplemented"),

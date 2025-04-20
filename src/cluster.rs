@@ -6,7 +6,6 @@ use crate::{cluster_node, server};
 
 type Publisher = Arc<Mutex<broadcast::Sender<server::rpc::ServerRequest>>>;
 type Subscriber = Arc<Mutex<broadcast::Receiver<server::rpc::ServerRequest>>>;
-
 type NodeInit<N> = Box<dyn FnOnce(Publisher, Subscriber) -> N>;
 
 /// A Raft cluster contains several servers
@@ -41,37 +40,60 @@ impl Cluster {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
 
     struct MockServer {
-        id: &'static str,
+        id: uuid::Uuid,
         tx: Publisher,
         rx: Subscriber,
     }
 
     impl MockServer {
-        fn new(id: &'static str, tx: Publisher, rx: Subscriber) -> Self {
+        fn new(id: uuid::Uuid, tx: Publisher, rx: Subscriber) -> Self {
             Self { id, tx, rx }
         }
     }
 
     impl cluster_node::ClusterNode for MockServer {
-        async fn run(&mut self) -> cluster_node::Result<()> {
-            Ok(())
+        async fn run(&mut self) -> cluster_node::Result<uuid::Uuid> {
+            Ok(self.id)
         }
     }
 
     #[tokio::test]
-    async fn can_register_node() -> anyhow::Result<()> {
+    async fn can_register_multiple_nodes() -> anyhow::Result<()> {
         let mut test_cluster = Cluster::new();
 
+        let server_one_id = uuid::Uuid::new_v4();
+        let server_two_id = uuid::Uuid::new_v4();
+
         test_cluster
-            .register_node(Box::new(|tx, rx| {
-                MockServer::new("mock-server-1-id", tx, rx)
+            .register_node(Box::new(move |tx, rx| {
+                MockServer::new(server_one_id.clone(), tx, rx)
             }))
             .await;
 
         assert_eq!(1, test_cluster.nodes.len());
+
+        test_cluster
+            .register_node(Box::new(move |tx, rx| {
+                MockServer::new(server_two_id.clone(), tx, rx)
+            }))
+            .await;
+
+        assert_eq!(2, test_cluster.nodes.len());
+
+        let mut node_ids = HashSet::new();
+
+        for handle in test_cluster.nodes {
+            let node_id = handle.await??;
+            node_ids.insert(node_id);
+        }
+
+        assert!(node_ids.contains(&server_one_id));
+        assert!(node_ids.contains(&server_two_id));
 
         Ok(())
     }
