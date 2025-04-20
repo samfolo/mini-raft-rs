@@ -1,5 +1,6 @@
 use crate::server;
 
+/// A Raft cluster contains several servers
 pub struct Cluster {
     servers: Vec<server::Server>,
 }
