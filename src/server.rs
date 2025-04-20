@@ -2,7 +2,7 @@ use std::{
     cmp,
     sync::{Arc, Mutex},
 };
-use tokio::sync::oneshot;
+use tokio::sync::{broadcast, mpsc};
 
 /// At any given time each server is in one of three states:
 /// leader, follower, or candidate.
@@ -13,13 +13,13 @@ pub enum ServerState {
 }
 
 /// ServerRequest represents a request sent by a Server.
-struct ServerRequest {
+#[derive(Clone)]
+pub struct ServerRequest {
     term: usize,
-    responder: Arc<Mutex<oneshot::Sender<ServerResponse>>>,
 }
 
 /// ServerResponse represents a response received from a Server.
-struct ServerResponse {
+pub struct ServerResponse {
     term: usize,
 }
 
@@ -28,6 +28,8 @@ struct ServerResponse {
 pub struct Server {
     state: ServerState,
     current_term: usize,
+    publisher: broadcast::Sender<ServerRequest>,
+    subscriber: broadcast::Receiver<ServerRequest>,
 }
 
 /// Raft servers communicate using remote procedure calls (RPCs), and the basic
@@ -35,10 +37,15 @@ pub struct Server {
 /// initiated by candidates during elections, and `AppendEntries` RPCs are initiated
 /// by leaders to replicate log entries and to provide a form of heartbeat.
 impl Server {
-    pub fn new() -> Self {
+    pub fn new(
+        publisher: broadcast::Sender<ServerRequest>,
+        subscriber: broadcast::Receiver<ServerRequest>,
+    ) -> Self {
         Self {
             state: ServerState::Follower,
             current_term: 1,
+            publisher,
+            subscriber,
         }
     }
 
@@ -72,9 +79,12 @@ impl Server {
 mod tests {
     use super::*;
 
+    const TEST_CANNEL_CAPACITY: usize = 16;
+
     #[test]
     fn starts() -> anyhow::Result<()> {
-        let _ = Server::new();
+        let (publisher, subscriber) = broadcast::channel(TEST_CANNEL_CAPACITY);
+        let _ = Server::new(publisher, subscriber);
         Ok(())
     }
 }
