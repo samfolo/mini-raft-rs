@@ -5,4 +5,9 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
-tokio = {version = "1.44", features = ["full"]}
+uuid ={ version = "1.16", features = ["v4"] }
+
+[dependencies.tokio]
+version = "1.44"
+default-features = false
+features = ["full"]
