@@ -12,10 +12,10 @@ use tokio::{
 
 use crate::{cluster_node, naive_logging};
 
-/// At any given time each server is in one of three states:
+/// At any given time each server is in one of three modes:
 /// leader, follower, or candidate.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ServerState {
+pub enum ServerMode {
     Leader,
     Follower,
     Candidate,
@@ -25,8 +25,8 @@ pub enum ServerState {
 /// Only one server can be the Leader at any one time.
 pub struct Server {
     id: uuid::Uuid,
-    state: watch::Receiver<ServerState>,
-    state_tx: watch::Sender<ServerState>,
+    mode: watch::Receiver<ServerMode>,
+    mode_tx: watch::Sender<ServerMode>,
     /// Latest term Server has seen. Iinitialised to 0 on first boot,
     /// increases monotonically.
     current_term: usize,
@@ -49,7 +49,7 @@ impl Server {
         let id = uuid::Uuid::new_v4();
         naive_logging::log(id, "initialised.");
 
-        let (state_tx, state) = watch::channel(ServerState::Follower);
+        let (mode_tx, mode) = watch::channel(ServerMode::Follower);
 
         let cluster_conn =
             cluster_connection::ClusterConnection::new(id, publisher, subscriber, election_timeout);
@@ -57,8 +57,8 @@ impl Server {
 
         Self {
             id,
-            state,
-            state_tx,
+            mode,
+            mode_tx,
             current_term: 0,
             cluster_conn,
             election_timeout,
@@ -78,20 +78,20 @@ impl Server {
     }
 
     /// If a candidate or leader discovers that its term is out of date, it
-    /// immediately reverts to follower state.
-    fn revert_to_follower(&mut self) -> Result<(), watch::error::SendError<ServerState>> {
-        if *self.state.borrow() != ServerState::Follower {
-            return self.state_tx.send(ServerState::Follower);
+    /// immediately reverts to follower mode.
+    fn revert_to_follower(&mut self) -> Result<(), watch::error::SendError<ServerMode>> {
+        if *self.mode.borrow() != ServerMode::Follower {
+            return self.mode_tx.send(ServerMode::Follower);
         }
 
         Ok(())
     }
 
     /// To begin an election, a follower increments its current term and
-    /// transitions to candidate state
-    fn upgrade_to_candidate(&self) -> Result<(), watch::error::SendError<ServerState>> {
-        if *self.state.borrow() != ServerState::Candidate {
-            return self.state_tx.send(ServerState::Candidate);
+    /// transitions to candidate mode
+    fn upgrade_to_candidate(&self) -> Result<(), watch::error::SendError<ServerMode>> {
+        if *self.mode.borrow() != ServerMode::Candidate {
+            return self.mode_tx.send(ServerMode::Candidate);
         }
 
         Ok(())
@@ -110,7 +110,7 @@ impl cluster_node::ClusterNode for Server {
         naive_logging::log(self.id, "running...");
 
         let server_id = self.id;
-        let mut state_clone = self.state.clone();
+        let mut mode_clone = self.mode.clone();
         let cluster_conn = self.cluster_conn.clone();
 
         let mut heartbeat_routine: Option<JoinHandle<cluster_node::Result<()>>> = None;
@@ -168,19 +168,19 @@ impl cluster_node::ClusterNode for Server {
                         ))
                     }
                 }
-                res = state_clone.changed() => {
+                res = mode_clone.changed() => {
                     match res {
                         Ok(_) => {
-                            let new_state = *state_clone.borrow_and_update();
-                            match new_state {
-                                ServerState::Leader  => {
+                            let new_mode = *mode_clone.borrow_and_update();
+                            match new_mode {
+                                ServerMode::Leader  => {
                                     if let Some(routine) = election_routine.take() {
                                         routine.abort();
                                     }
 
                                     if heartbeat_routine.is_none() {
                                         let cluster_conn = cluster_conn.clone();
-                                        let mut heartbeat_state_clone = state_clone.clone();
+                                        let mut heartbeat_mode_clone = mode_clone.clone();
 
                                         let routine = tokio::spawn(async move {
                                             let mut interval = time::interval(time::Duration::from_millis(1000));
@@ -197,7 +197,7 @@ impl cluster_node::ClusterNode for Server {
                                                             ))
                                                         }
                                                     }
-                                                    res = heartbeat_state_clone.changed() => {
+                                                    res = heartbeat_mode_clone.changed() => {
                                                         match res {
                                                             Ok(_) => break,
                                                             Err(err) => return Err(cluster_node::ClusterNodeError::HeartbeatError(
@@ -215,14 +215,14 @@ impl cluster_node::ClusterNode for Server {
                                         heartbeat_routine = Some(routine);
                                     }
                                 }
-                                ServerState::Candidate => {
+                                ServerMode::Candidate => {
                                     if let Some(routine) = heartbeat_routine.take() {
                                         routine.abort();
                                     }
 
                                     if election_routine.is_none() {
                                         let cluster_conn = cluster_conn.clone();
-                                        let mut election_state_clone = state_clone.clone();
+                                        let mut election_mode_clone = mode_clone.clone();
 
                                         let routine = tokio::spawn(async move {
                                             let mut interval = time::interval(time::Duration::from_millis(1000));
@@ -241,7 +241,7 @@ impl cluster_node::ClusterNode for Server {
                                                             ))
                                                         }
                                                     }
-                                                    res = election_state_clone.changed() => {
+                                                    res = election_mode_clone.changed() => {
                                                         match res {
                                                             Ok(_) => break,
                                                             Err(err) => return Err(cluster_node::ClusterNodeError::HeartbeatError(
@@ -259,7 +259,7 @@ impl cluster_node::ClusterNode for Server {
                                         election_routine = Some(routine);
                                     }
                                 },
-                                ServerState::Follower => {
+                                ServerMode::Follower => {
                                     if let Some(routine) = heartbeat_routine.take() {
                                         routine.abort();
                                     }
