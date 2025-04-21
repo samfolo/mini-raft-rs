@@ -1,13 +1,4 @@
-pub fn does() -> bool {
-    true
-}
+pub(crate) mod cluster_node;
+pub(crate) mod server;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_does() {
-        assert!(does());
-    }
-}
+pub mod cluster;
