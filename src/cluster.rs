@@ -1,4 +1,4 @@
-use std::{num::NonZeroU64, sync::Arc};
+use std::num::NonZeroU64;
 
 use tokio::{sync::broadcast, time};
 
@@ -36,8 +36,8 @@ impl Cluster {
     ) -> &mut Self {
         let publisher = self.publisher.clone();
         let subscriber = publisher.subscribe();
-        let node = Arc::new(node_init(publisher, subscriber));
-        let handle = tokio::spawn(async { node.run().await });
+        let mut node = node_init(publisher, subscriber);
+        let handle = tokio::spawn(async move { node.run().await });
         self.nodes.push(handle);
         self
     }
@@ -98,7 +98,7 @@ mod tests {
     }
 
     impl cluster_node::ClusterNode for MockServer {
-        async fn run(self: Arc<Self>) -> cluster_node::Result<uuid::Uuid> {
+        async fn run(self: &mut Self) -> cluster_node::Result<uuid::Uuid> {
             Ok(self.id)
         }
     }

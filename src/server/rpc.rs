@@ -5,12 +5,11 @@ use tokio::sync::mpsc;
 pub enum RequestBody {
     AppendEntries {
         leader_id: uuid::Uuid,
-        prev_log_index: usize,
-        prev_log_term: usize,
         entries: Vec<String>, // try and remove owned string later.
-        leader_commit: usize,
     },
-    RequestVote {},
+    RequestVote {
+        candidate_id: uuid::Uuid,
+    },
 }
 
 /// ServerRequest represents a request sent by a Server.

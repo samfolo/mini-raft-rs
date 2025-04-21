@@ -1,9 +1,11 @@
+mod cluster_connection;
 pub mod rpc;
 
-use rpc::{RequestBody, ServerRequest};
-use std::{sync::Arc, time::Duration};
+use std::pin;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::{
-    sync::{broadcast, mpsc, watch},
+    sync::{broadcast, watch},
     task::JoinHandle,
     time,
 };
@@ -28,8 +30,7 @@ pub struct Server {
     /// Latest term Server has seen. Iinitialised to 0 on first boot,
     /// increases monotonically.
     current_term: usize,
-    publisher: broadcast::Sender<rpc::ServerRequest>,
-    subscriber: broadcast::Receiver<rpc::ServerRequest>,
+    cluster_conn: Arc<Mutex<cluster_connection::ClusterConnection>>,
     election_timeout: time::Duration,
 }
 
@@ -50,13 +51,16 @@ impl Server {
 
         let (state_tx, state) = watch::channel(ServerState::Follower);
 
+        let cluster_conn =
+            cluster_connection::ClusterConnection::new(id, publisher, subscriber, election_timeout);
+        let cluster_conn = Arc::new(Mutex::new(cluster_conn));
+
         Self {
             id,
             state,
             state_tx,
             current_term: 0,
-            publisher,
-            subscriber,
+            cluster_conn,
             election_timeout,
         }
     }
@@ -64,7 +68,7 @@ impl Server {
     /// Current terms are exchanged whenever Servers communicate; if
     /// one Server’s current term is smaller than the other’s, then it updates
     /// its current term to the larger value.
-    fn sync_term(&mut self, request: &ServerRequest) {
+    fn sync_term(&mut self, request: &rpc::ServerRequest) {
         let sender_term = request.term();
 
         if self.current_term < sender_term {
@@ -75,52 +79,20 @@ impl Server {
 
     /// If a candidate or leader discovers that its term is out of date, it
     /// immediately reverts to follower state.
-    fn revert_to_follower(&mut self) {
+    fn revert_to_follower(&mut self) -> Result<(), watch::error::SendError<ServerState>> {
         if *self.state.borrow() != ServerState::Follower {
-            self.state_tx.send(ServerState::Follower);
+            return self.state_tx.send(ServerState::Follower);
         }
-    }
-
-    /// `RequestVote` RPCs are initiated by candidates during elections.
-    pub async fn request_vote(&self) -> anyhow::Result<()> {
-        let (responder, receiver) = mpsc::channel(Self::MESSAGE_BUFFER_SIZE);
-
-        self.publisher.send(rpc::ServerRequest::new(
-            self.current_term,
-            responder,
-            rpc::RequestBody::RequestVote {},
-        ))?;
-
-        // Do something with this in a thread
-        let _ = receiver;
 
         Ok(())
     }
 
-    /// `AppendEntries` RPCs are initiated by leaders to replicate log entries
-    /// and to provide a form of heartbeat.
-    pub async fn append_entries(&self, entries: Vec<String>) -> anyhow::Result<()> {
-        naive_logging::log(
-            self.id,
-            &format!("sending APPEND_ENTRIES with {} entries", entries.len()),
-        );
-
-        let (responder, receiver) = mpsc::channel(Self::MESSAGE_BUFFER_SIZE);
-
-        self.publisher.send(rpc::ServerRequest::new(
-            self.current_term,
-            responder,
-            rpc::RequestBody::AppendEntries {
-                leader_id: self.id,
-                entries,
-                prev_log_index: 0,
-                prev_log_term: 0,
-                leader_commit: 0,
-            },
-        ))?;
-
-        // Do something with this in a thread
-        let _ = receiver;
+    /// To begin an election, a follower increments its current term and
+    /// transitions to candidate state
+    fn upgrade_to_candidate(&self) -> Result<(), watch::error::SendError<ServerState>> {
+        if *self.state.borrow() != ServerState::Candidate {
+            return self.state_tx.send(ServerState::Candidate);
+        }
 
         Ok(())
     }
@@ -134,31 +106,65 @@ impl Server {
 }
 
 impl cluster_node::ClusterNode for Server {
-    async fn run(self: Arc<Self>) -> Result<uuid::Uuid, cluster_node::ClusterNodeError> {
+    async fn run(self: &mut Self) -> Result<uuid::Uuid, cluster_node::ClusterNodeError> {
         naive_logging::log(self.id, "running...");
 
         let server_id = self.id;
-        let mut subscriber = self.publisher.subscribe();
         let mut state_clone = self.state.clone();
+        let cluster_conn = self.cluster_conn.clone();
 
         let mut heartbeat_routine: Option<JoinHandle<cluster_node::Result<()>>> = None;
+        let mut election_routine: Option<JoinHandle<cluster_node::Result<()>>> = None;
+
+        let recv_timeout = time::sleep(self.election_timeout);
+        tokio::pin!(recv_timeout);
+
+        let reset_timeout = |timeout: &mut pin::Pin<&mut time::Sleep>| {
+            timeout
+                .as_mut()
+                .reset(time::Instant::now() + self.election_timeout)
+        };
 
         loop {
+            let mut conn = cluster_conn.lock().await;
+
             tokio::select! {
-                res = subscriber.recv() => {
+                _ = &mut recv_timeout => {
+                    naive_logging::log(self.id, "timed out waiting for a response...");
+                    naive_logging::log(self.id, "starting election...");
+                    if let Err(err) = self.upgrade_to_candidate() {
+                        return Err(cluster_node::ClusterNodeError::UnexpectedError(
+                            err.into(),
+                        ));
+                    }
+
+                    // Reset the election timeout:
+                    reset_timeout(&mut recv_timeout);
+                },
+                res = conn.recv() => {
                     match res {
                         Ok(request) => {
                             match request.body() {
-                                RequestBody::AppendEntries { leader_id, .. } => {
-                                    naive_logging::log(self.id, &format!("received APPEND_ENTRIES from {}", leader_id));
+                                rpc::RequestBody::AppendEntries { leader_id, .. } => {
+                                    if conn.node_id().ne(leader_id) {
+                                        // Received request from leader; reset the election timeout:
+                                        reset_timeout(&mut recv_timeout);
+                                        naive_logging::log(self.id, &format!("received APPEND_ENTRIES from {}", leader_id));
+                                    }
                                 }
-                                _ => todo!("unimplemented")
+                                rpc::RequestBody::RequestVote { candidate_id, .. } => {
+                                    if conn.node_id().ne(candidate_id) {
+                                        // Received request from leader; reset the election timeout:
+                                        reset_timeout(&mut recv_timeout);
+                                        naive_logging::log(self.id, &format!("received REQUEST_VOTE from {} with term {}", candidate_id, conn.current_term()));
+                                    }
+                                }
                             }
                         },
                         // Tracing would be nice here..
                         Err(err) => return Err(cluster_node::ClusterNodeError::ClusterConnectionError(
                             server_id,
-                            err.into(),
+                            err.clone(),
                         ))
                     }
                 }
@@ -167,45 +173,90 @@ impl cluster_node::ClusterNode for Server {
                         Ok(_) => {
                             let new_state = *state_clone.borrow_and_update();
                             match new_state {
-                                ServerState::Leader if heartbeat_routine.is_none() => {
-                                    let server = Arc::clone(&self);
-                                    let mut heartbeat_state_clone = state_clone.clone();
+                                ServerState::Leader  => {
+                                    if heartbeat_routine.is_none() {
+                                        let cluster_conn = cluster_conn.clone();
+                                        let mut heartbeat_state_clone = state_clone.clone();
 
-                                    let routine = tokio::spawn(async move {
-                                        let mut interval = time::interval(time::Duration::from_millis(1000));
-                                        interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
-                                        interval.tick().await;
+                                        let routine = tokio::spawn(async move {
+                                            let mut interval = time::interval(time::Duration::from_millis(1000));
+                                            interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+                                            interval.tick().await;
 
-                                        loop {
-                                            tokio::select! {
-                                                _ = interval.tick() => {
-                                                    if let Err(err) = server.append_entries(vec![]).await {
-                                                        return Err(cluster_node::ClusterNodeError::HeartbeatError(
-                                                            server_id,
-                                                            err.into(),
-                                                        ))
+                                            loop {
+                                                tokio::select! {
+                                                    _ = interval.tick() => {
+                                                        if let Err(err) = cluster_conn.lock().await.append_entries(vec![]).await {
+                                                            return Err(cluster_node::ClusterNodeError::HeartbeatError(
+                                                                server_id,
+                                                                err.into(),
+                                                            ))
+                                                        }
                                                     }
-                                                }
-                                                res = heartbeat_state_clone.changed() => {
-                                                    match res {
-                                                        Ok(_) => break,
-                                                        Err(err) => return Err(cluster_node::ClusterNodeError::HeartbeatError(
-                                                            server_id,
-                                                            err.into(),
-                                                        ))
+                                                    res = heartbeat_state_clone.changed() => {
+                                                        match res {
+                                                            Ok(_) => break,
+                                                            Err(err) => return Err(cluster_node::ClusterNodeError::HeartbeatError(
+                                                                server_id,
+                                                                err.into(),
+                                                            ))
+                                                        }
                                                     }
                                                 }
                                             }
-                                        }
 
-                                        Ok(())
-                                    });
+                                            Ok(())
+                                        });
 
-                                    heartbeat_routine = Some(routine);
+                                        heartbeat_routine = Some(routine);
+                                    }
                                 }
-                                ServerState::Leader => {},
-                                _ => {
+                                ServerState::Candidate => {
+                                    if election_routine.is_none() {
+                                        let cluster_conn = cluster_conn.clone();
+                                        let mut election_state_clone = state_clone.clone();
+
+                                        let routine = tokio::spawn(async move {
+                                            let mut interval = time::interval(time::Duration::from_millis(1000));
+                                            interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+                                            interval.tick().await;
+
+                                            loop {
+                                                tokio::select! {
+                                                    _ = interval.tick() => {
+                                                        let mut conn = cluster_conn.lock().await;
+                                                        conn.increment_term();
+                                                        if let Err(err) = conn.request_vote().await {
+                                                            return Err(cluster_node::ClusterNodeError::HeartbeatError(
+                                                                server_id,
+                                                                err.into(),
+                                                            ))
+                                                        }
+                                                    }
+                                                    res = election_state_clone.changed() => {
+                                                        match res {
+                                                            Ok(_) => break,
+                                                            Err(err) => return Err(cluster_node::ClusterNodeError::HeartbeatError(
+                                                                server_id,
+                                                                err.into(),
+                                                            ))
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            Ok(())
+                                        });
+
+                                        election_routine = Some(routine);
+                                    }
+                                },
+                                ServerState::Follower => {
                                     if let Some(routine) = heartbeat_routine.take() {
+                                        routine.abort();
+                                    }
+
+                                    if let Some(routine) = election_routine.take() {
                                         routine.abort();
                                     }
                                 }

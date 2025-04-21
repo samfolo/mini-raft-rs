@@ -9,7 +9,7 @@ pub type Result<T> = anyhow::Result<T, ClusterNodeError>;
 pub type ClusterNodeHandle = task::JoinHandle<Result<uuid::Uuid>>;
 
 pub trait ClusterNode: Send + 'static {
-    fn run(self: Arc<Self>) -> impl Future<Output = Result<uuid::Uuid>> + Send;
+    fn run(self: &mut Self) -> impl Future<Output = Result<uuid::Uuid>> + Send;
 }
 
 #[derive(thiserror::Error)]
