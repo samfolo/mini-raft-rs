@@ -1,6 +1,6 @@
 use std::{num::NonZeroU64, sync::Arc};
 
-use tokio::sync::broadcast;
+use tokio::{sync::broadcast, time};
 
 use crate::{cluster_node, server};
 
@@ -13,17 +13,20 @@ pub struct Cluster {
     nodes: Vec<cluster_node::ClusterNodeHandle>,
     publisher: Publisher,
     subscriber: Subscriber,
+    election_timeout: time::Duration,
 }
 
 impl Cluster {
     const DEFAULT_MESSAGE_BUFFER_SIZE: usize = 32;
+    const DEFAULT_ELECTION_TIMEOUT_MS: u64 = 1000;
 
-    pub fn new(buffer_size: usize) -> Self {
+    pub fn new(buffer_size: usize, election_timeout: time::Duration) -> Self {
         let (publisher, subscriber) = broadcast::channel(buffer_size);
         Self {
             nodes: Default::default(),
             publisher,
             subscriber,
+            election_timeout,
         }
     }
 
@@ -41,8 +44,10 @@ impl Cluster {
 
     pub async fn run_with_nodes(mut self, count: NonZeroU64) {
         for _ in 0..count.into() {
-            self.register_node(Box::new(move |tx, rx| server::Server::new(tx, rx)))
-                .await;
+            self.register_node(Box::new(move |tx, rx| {
+                server::Server::new(tx, rx, self.election_timeout)
+            }))
+            .await;
         }
 
         match tokio::signal::ctrl_c().await {
@@ -69,6 +74,7 @@ impl Default for Cluster {
             nodes: Default::default(),
             publisher,
             subscriber,
+            election_timeout: time::Duration::from_millis(Self::DEFAULT_ELECTION_TIMEOUT_MS),
         }
     }
 }
@@ -99,7 +105,7 @@ mod tests {
 
     #[tokio::test]
     async fn can_register_multiple_nodes() -> anyhow::Result<()> {
-        let mut test_cluster = Cluster::new(Cluster::DEFAULT_MESSAGE_BUFFER_SIZE);
+        let mut test_cluster = Cluster::default();
 
         let server_one_id = uuid::Uuid::new_v4();
         let server_two_id = uuid::Uuid::new_v4();

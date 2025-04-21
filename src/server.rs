@@ -30,6 +30,7 @@ pub struct Server {
     current_term: usize,
     publisher: broadcast::Sender<rpc::ServerRequest>,
     subscriber: broadcast::Receiver<rpc::ServerRequest>,
+    election_timeout: time::Duration,
 }
 
 /// Raft servers communicate using remote procedure calls (RPCs), and the basic
@@ -42,6 +43,7 @@ impl Server {
     pub fn new(
         publisher: broadcast::Sender<rpc::ServerRequest>,
         subscriber: broadcast::Receiver<rpc::ServerRequest>,
+        election_timeout: time::Duration,
     ) -> Self {
         let id = uuid::Uuid::new_v4();
         naive_logging::log(id, "initialised.");
@@ -55,6 +57,7 @@ impl Server {
             current_term: 0,
             publisher,
             subscriber,
+            election_timeout,
         }
     }
 
@@ -228,7 +231,7 @@ mod tests {
     #[test]
     fn starts() -> anyhow::Result<()> {
         let (publisher, subscriber) = broadcast::channel(TEST_CANNEL_CAPACITY);
-        let _ = Server::new(publisher, subscriber);
+        let _ = Server::new(publisher, subscriber, time::Duration::from_millis(10));
 
         Ok(())
     }
