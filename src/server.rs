@@ -155,7 +155,7 @@ impl cluster_node::ClusterNode for Server {
                             match new_state {
                                 ServerState::Leader if heartbeat_routine.is_none() => {
                                     let server = Arc::clone(&self);
-                                    let mut state_clone = state_clone.clone();
+                                    let mut heartbeat_state_clone = state_clone.clone();
 
                                     let routine = tokio::spawn(async move {
                                         let mut interval = time::interval(time::Duration::from_millis(1000));
@@ -172,7 +172,7 @@ impl cluster_node::ClusterNode for Server {
                                                         ))
                                                     }
                                                 }
-                                                res = state_clone.changed() => {
+                                                res = heartbeat_state_clone.changed() => {
                                                     match res {
                                                         Ok(_) => break,
                                                         Err(err) => return Err(cluster_node::ClusterNodeError::HeartbeatError(

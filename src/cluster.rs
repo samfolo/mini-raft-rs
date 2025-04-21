@@ -1,11 +1,11 @@
-use std::sync::{Arc, Mutex};
+use std::{num::NonZeroU64, sync::Arc};
 
 use tokio::sync::broadcast;
 
 use crate::{cluster_node, server};
 
-type Publisher = Arc<Mutex<broadcast::Sender<server::rpc::ServerRequest>>>;
-type Subscriber = Arc<Mutex<broadcast::Receiver<server::rpc::ServerRequest>>>;
+type Publisher = broadcast::Sender<server::rpc::ServerRequest>;
+type Subscriber = broadcast::Receiver<server::rpc::ServerRequest>;
 type NodeInit<N> = Box<dyn FnOnce(Publisher, Subscriber) -> N>;
 
 /// A Raft cluster contains several servers
@@ -22,20 +22,43 @@ impl Cluster {
         let (publisher, subscriber) = broadcast::channel(buffer_size);
         Self {
             nodes: Default::default(),
-            publisher: Arc::new(Mutex::new(publisher)),
-            subscriber: Arc::new(Mutex::new(subscriber)),
+            publisher,
+            subscriber,
         }
     }
 
-    pub async fn register_node<N: cluster_node::ClusterNode + Sync>(
+    async fn register_node<N: cluster_node::ClusterNode + Sync>(
         &mut self,
         node_init: NodeInit<N>,
     ) -> &mut Self {
-        let node = node_init(Arc::clone(&self.publisher), Arc::clone(&self.subscriber));
-        let arc_node = Arc::new(node);
-        let handle = tokio::spawn(async move { arc_node.run().await });
+        let publisher = self.publisher.clone();
+        let subscriber = publisher.subscribe();
+        let node = Arc::new(node_init(publisher, subscriber));
+        let handle = tokio::spawn(async { node.run().await });
         self.nodes.push(handle);
         self
+    }
+
+    pub async fn run_with_nodes(mut self, count: NonZeroU64) {
+        for _ in 0..count.into() {
+            self.register_node(Box::new(move |tx, rx| server::Server::new(tx, rx)))
+                .await;
+        }
+
+        match tokio::signal::ctrl_c().await {
+            Ok(_) => self.shutdown().await,
+            Err(err) => panic!("{err:?}"),
+        }
+    }
+
+    pub async fn shutdown(self) {
+        for node in &self.nodes {
+            node.abort();
+        }
+
+        for node in self.nodes {
+            assert!(node.await.unwrap_err().is_cancelled());
+        }
     }
 }
 
@@ -44,8 +67,8 @@ impl Default for Cluster {
         let (publisher, subscriber) = broadcast::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
         Self {
             nodes: Default::default(),
-            publisher: Arc::new(Mutex::new(publisher)),
-            subscriber: Arc::new(Mutex::new(subscriber)),
+            publisher,
+            subscriber,
         }
     }
 }
