@@ -174,6 +174,10 @@ impl cluster_node::ClusterNode for Server {
                             let new_state = *state_clone.borrow_and_update();
                             match new_state {
                                 ServerState::Leader  => {
+                                    if let Some(routine) = election_routine.take() {
+                                        routine.abort();
+                                    }
+
                                     if heartbeat_routine.is_none() {
                                         let cluster_conn = cluster_conn.clone();
                                         let mut heartbeat_state_clone = state_clone.clone();
@@ -212,6 +216,10 @@ impl cluster_node::ClusterNode for Server {
                                     }
                                 }
                                 ServerState::Candidate => {
+                                    if let Some(routine) = heartbeat_routine.take() {
+                                        routine.abort();
+                                    }
+
                                     if election_routine.is_none() {
                                         let cluster_conn = cluster_conn.clone();
                                         let mut election_state_clone = state_clone.clone();
