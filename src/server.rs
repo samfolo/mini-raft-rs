@@ -1,7 +1,6 @@
-#![allow(dead_code)] // TODO: remove next branch
-
 pub mod rpc;
 
+use rpc::ServerRequest;
 use std::cmp;
 use tokio::sync::{broadcast, mpsc};
 
@@ -20,13 +19,11 @@ pub enum ServerState {
 /// Only one server can be the Leader at any one time.
 pub struct Server {
     id: uuid::Uuid,
-    #[allow(unused)]
     state: ServerState,
     /// Latest term Server has seen. Iinitialised to 0 on first boot,
     /// increases monotonically.
     current_term: usize,
     publisher: broadcast::Sender<rpc::ServerRequest>,
-    #[allow(unused)]
     subscriber: broadcast::Receiver<rpc::ServerRequest>,
 }
 
@@ -53,30 +50,32 @@ impl Server {
     /// Current terms are exchanged whenever Servers communicate; if
     /// one Server’s current term is smaller than the other’s, then it updates
     /// its current term to the larger value.
-    #[allow(unused)]
-    fn sync_term(&self, request: &Server) {
-        match self.current_term.cmp(&request.current_term) {
-            cmp::Ordering::Greater => todo!("unimplemented"),
-            cmp::Ordering::Less => todo!("unimplemented"),
-            cmp::Ordering::Equal => todo!("unimplemented"),
-        };
+    fn sync_term(&mut self, request: &ServerRequest) {
+        let sender_term = request.term();
+
+        if self.current_term < sender_term {
+            self.current_term = sender_term;
+            self.revert_to_follower();
+        }
     }
 
     /// If a candidate or leader discovers that its term is out of date, it
     /// immediately reverts to follower state.
-    #[allow(unused)]
     fn revert_to_follower(&mut self) {
-        todo!("unimplemented")
+        if self.state != ServerState::Follower {
+            self.state == ServerState::Follower;
+        }
     }
 
     /// `RequestVote` RPCs are initiated by candidates during elections.
     pub async fn request_vote(&self) -> anyhow::Result<()> {
         let (responder, receiver) = mpsc::channel(Self::MESSAGE_BUFFER_SIZE);
 
-        self.publisher.send(
-            rpc::ServerRequest::new(self.current_term, responder)
-                .with_payload(rpc::RequestPayload::RequestVote {}),
-        )?;
+        self.publisher.send(rpc::ServerRequest::new(
+            self.current_term,
+            responder,
+            Some(rpc::RequestPayload::RequestVote {}),
+        ))?;
 
         // Do something with this in a thread
         let _ = receiver;
@@ -89,10 +88,11 @@ impl Server {
     pub async fn append_entries(&self) -> anyhow::Result<()> {
         let (responder, receiver) = mpsc::channel(Self::MESSAGE_BUFFER_SIZE);
 
-        self.publisher.send(
-            rpc::ServerRequest::new(self.current_term, responder)
-                .with_payload(rpc::RequestPayload::AppendEntries {}),
-        )?;
+        self.publisher.send(rpc::ServerRequest::new(
+            self.current_term,
+            responder,
+            Some(rpc::RequestPayload::AppendEntries {}),
+        ))?;
 
         // Do something with this in a thread
         let _ = receiver;

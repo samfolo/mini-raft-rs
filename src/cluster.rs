@@ -1,5 +1,3 @@
-#![allow(dead_code)] // TODO: remove next branch
-
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::broadcast;
