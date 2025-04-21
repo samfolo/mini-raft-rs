@@ -1,9 +1,15 @@
 use tokio::sync::mpsc;
 
-/// RequestPayload represents the payload of a ServerRequest, should it need one.
+/// RequestBody represents the body of a ServerRequest.
 #[derive(Clone, Debug)]
-pub enum RequestPayload {
-    AppendEntries {},
+pub enum RequestBody {
+    AppendEntries {
+        leader_id: uuid::Uuid,
+        prev_log_index: usize,
+        prev_log_term: usize,
+        entries: Vec<String>, // try and remove owned string later.
+        leader_commit: usize,
+    },
     RequestVote {},
 }
 
@@ -12,33 +18,41 @@ pub enum RequestPayload {
 pub struct ServerRequest {
     term: usize,
     responder: mpsc::Sender<ServerResponse>,
-    payload: Option<RequestPayload>,
+    body: Option<RequestBody>,
 }
 
 impl ServerRequest {
     pub fn new(
         term: usize,
         responder: mpsc::Sender<ServerResponse>,
-        payload: Option<RequestPayload>,
+        body: Option<RequestBody>,
     ) -> Self {
         Self {
             term,
             responder,
-            payload,
+            body,
         }
-    }
-
-    pub fn payload(&self) -> &Option<RequestPayload> {
-        &self.payload
     }
 
     pub fn term(&self) -> usize {
         self.term
     }
+
+    pub fn body(&self) -> &Option<RequestBody> {
+        &self.body
+    }
+}
+
+/// ResponseBody represents the body of a ServerResponse
+#[derive(Clone, Debug)]
+pub enum ResponseBody {
+    AppendEntries { term: usize, success: bool },
+    RequestVote { term: usize, vote_granted: bool },
 }
 
 /// ServerResponse represents a response received from a Server.
 #[derive(Clone, Debug)]
 pub struct ServerResponse {
     term: usize,
+    body: ResponseBody,
 }

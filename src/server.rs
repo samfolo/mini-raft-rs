@@ -74,7 +74,7 @@ impl Server {
         self.publisher.send(rpc::ServerRequest::new(
             self.current_term,
             responder,
-            Some(rpc::RequestPayload::RequestVote {}),
+            Some(rpc::RequestBody::RequestVote {}),
         ))?;
 
         // Do something with this in a thread
@@ -85,13 +85,19 @@ impl Server {
 
     /// `AppendEntries` RPCs are initiated by leaders to replicate log entries
     /// and to provide a form of heartbeat.
-    pub async fn append_entries(&self) -> anyhow::Result<()> {
+    pub async fn append_entries(&self, entries: Vec<String>) -> anyhow::Result<()> {
         let (responder, receiver) = mpsc::channel(Self::MESSAGE_BUFFER_SIZE);
 
         self.publisher.send(rpc::ServerRequest::new(
             self.current_term,
             responder,
-            Some(rpc::RequestPayload::AppendEntries {}),
+            Some(rpc::RequestBody::AppendEntries {
+                leader_id: self.id,
+                entries,
+                prev_log_index: 0,
+                prev_log_term: 0,
+                leader_commit: 0,
+            }),
         ))?;
 
         // Do something with this in a thread
@@ -114,7 +120,7 @@ impl cluster_node::ClusterNode for Server {
             match self.subscriber.recv().await {
                 Ok(_) => todo!("unimplemented"),
                 Err(err) => {
-                    // Tracing would be nice..
+                    // Tracing would be nice here..
                     eprintln!("error received for server {}: {err:?}", self.id);
                     return Err(err);
                 }
