@@ -118,7 +118,7 @@ impl cluster_node::ClusterNode for Server {
         let recv_timeout = time::sleep(self.election_timeout);
         tokio::pin!(recv_timeout);
 
-        let reset_timeout = async |timeout: &mut pin::Pin<&mut time::Sleep>| {
+        let reset_timeout = |timeout: &mut pin::Pin<&mut time::Sleep>| {
             timeout
                 .as_mut()
                 .reset(time::Instant::now() + self.election_timeout)
@@ -140,7 +140,7 @@ impl cluster_node::ClusterNode for Server {
                     }
 
                     // Reset the election timeout:
-                    reset_timeout(&mut recv_timeout).await;
+                    reset_timeout(&mut recv_timeout);
                 },
                 res = conn.recv() => {
                     match res {
@@ -149,14 +149,14 @@ impl cluster_node::ClusterNode for Server {
                                 rpc::RequestBody::AppendEntries { leader_id, .. } => {
                                     if conn.node_id().ne(leader_id) {
                                         // Received request from leader; reset the election timeout:
-                                        reset_timeout(&mut recv_timeout).await;
+                                        reset_timeout(&mut recv_timeout);
                                         naive_logging::log(self.id, &format!("received APPEND_ENTRIES from {}", leader_id));
                                     }
                                 }
                                 rpc::RequestBody::RequestVote { candidate_id, .. } => {
                                     if conn.node_id().ne(candidate_id) {
                                         // Received request from leader; reset the election timeout:
-                                        reset_timeout(&mut recv_timeout).await;
+                                        reset_timeout(&mut recv_timeout);
                                         naive_logging::log(self.id, &format!("received REQUEST_VOTE from {} with term {}", candidate_id, request.term()));
                                     }
                                 }
