@@ -1,3 +1,5 @@
+#![allow(dead_code)] // TODO: remove next branch
+
 pub mod rpc;
 
 use std::cmp;

@@ -1,3 +1,5 @@
+#![allow(dead_code)] // TODO: remove next branch
+
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::broadcast;
@@ -16,10 +18,10 @@ pub struct Cluster {
 }
 
 impl Cluster {
-    const MESSAGE_BUFFER_SIZE: usize = 32;
+    const DEFAULT_MESSAGE_BUFFER_SIZE: usize = 32;
 
-    pub fn new() -> Self {
-        let (publisher, subscriber) = broadcast::channel(Self::MESSAGE_BUFFER_SIZE);
+    pub fn new(buffer_size: usize) -> Self {
+        let (publisher, subscriber) = broadcast::channel(buffer_size);
         Self {
             nodes: Default::default(),
             publisher: Arc::new(Mutex::new(publisher)),
@@ -35,6 +37,17 @@ impl Cluster {
         let handle = tokio::spawn(async move { node.run().await });
         self.nodes.push(handle);
         self
+    }
+}
+
+impl Default for Cluster {
+    fn default() -> Self {
+        let (publisher, subscriber) = broadcast::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
+        Self {
+            nodes: Default::default(),
+            publisher: Arc::new(Mutex::new(publisher)),
+            subscriber: Arc::new(Mutex::new(subscriber)),
+        }
     }
 }
 
@@ -64,7 +77,7 @@ mod tests {
 
     #[tokio::test]
     async fn can_register_multiple_nodes() -> anyhow::Result<()> {
-        let mut test_cluster = Cluster::new();
+        let mut test_cluster = Cluster::new(Cluster::DEFAULT_MESSAGE_BUFFER_SIZE);
 
         let server_one_id = uuid::Uuid::new_v4();
         let server_two_id = uuid::Uuid::new_v4();
