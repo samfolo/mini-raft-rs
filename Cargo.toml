@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
+thiserror = "2.0.12"
 uuid ={ version = "1.16", features = ["v4"] }
 
 [dependencies.tokio]

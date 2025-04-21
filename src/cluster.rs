@@ -27,12 +27,13 @@ impl Cluster {
         }
     }
 
-    pub async fn register_node<N: cluster_node::ClusterNode>(
+    pub async fn register_node<N: cluster_node::ClusterNode + Sync>(
         &mut self,
         node_init: NodeInit<N>,
     ) -> &mut Self {
-        let mut node = node_init(Arc::clone(&self.publisher), Arc::clone(&self.subscriber));
-        let handle = tokio::spawn(async move { node.run().await });
+        let node = node_init(Arc::clone(&self.publisher), Arc::clone(&self.subscriber));
+        let arc_node = Arc::new(node);
+        let handle = tokio::spawn(async move { arc_node.run().await });
         self.nodes.push(handle);
         self
     }
@@ -68,7 +69,7 @@ mod tests {
     }
 
     impl cluster_node::ClusterNode for MockServer {
-        async fn run(&mut self) -> cluster_node::Result<uuid::Uuid> {
+        async fn run(self: Arc<Self>) -> cluster_node::Result<uuid::Uuid> {
             Ok(self.id)
         }
     }

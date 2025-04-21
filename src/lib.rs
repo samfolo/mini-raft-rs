@@ -1,4 +1,5 @@
-pub(crate) mod cluster_node;
-pub(crate) mod server;
+mod cluster_node;
+mod errors;
+mod server;
 
 pub mod cluster;

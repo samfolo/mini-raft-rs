@@ -1,14 +1,18 @@
 pub mod rpc;
 
 use rpc::ServerRequest;
-use std::cmp;
-use tokio::sync::{broadcast, mpsc};
+use std::{sync::Arc, time::Duration};
+use tokio::{
+    sync::{broadcast, mpsc, watch},
+    task::JoinHandle,
+    time,
+};
 
 use crate::cluster_node;
 
 /// At any given time each server is in one of three states:
 /// leader, follower, or candidate.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ServerState {
     Leader,
     Follower,
@@ -19,7 +23,8 @@ pub enum ServerState {
 /// Only one server can be the Leader at any one time.
 pub struct Server {
     id: uuid::Uuid,
-    state: ServerState,
+    state: watch::Receiver<ServerState>,
+    state_tx: watch::Sender<ServerState>,
     /// Latest term Server has seen. Iinitialised to 0 on first boot,
     /// increases monotonically.
     current_term: usize,
@@ -38,9 +43,12 @@ impl Server {
         publisher: broadcast::Sender<rpc::ServerRequest>,
         subscriber: broadcast::Receiver<rpc::ServerRequest>,
     ) -> Self {
+        let (state_tx, state) = watch::channel(ServerState::Follower);
+
         Self {
             id: uuid::Uuid::new_v4(),
-            state: ServerState::Follower,
+            state,
+            state_tx,
             current_term: 0,
             publisher,
             subscriber,
@@ -62,8 +70,8 @@ impl Server {
     /// If a candidate or leader discovers that its term is out of date, it
     /// immediately reverts to follower state.
     fn revert_to_follower(&mut self) {
-        if self.state != ServerState::Follower {
-            self.state == ServerState::Follower;
+        if *self.state.borrow() != ServerState::Follower {
+            self.state_tx.send(ServerState::Follower);
         }
     }
 
@@ -115,14 +123,85 @@ impl Server {
 }
 
 impl cluster_node::ClusterNode for Server {
-    async fn run(&mut self) -> Result<uuid::Uuid, broadcast::error::RecvError> {
+    async fn run(self: Arc<Self>) -> Result<uuid::Uuid, cluster_node::ClusterNodeError> {
+        // check if the server is a leader
+        // if it is, run the heartbeat at intervals
+        // if that changes, stop the heartbeat routine
+        // if it becomes a leader again, start the routine again
+        // fail gracefully
+
+        let server_id = self.id;
+        let mut subscriber = self.publisher.subscribe();
+        let mut state_clone = self.state.clone();
+
+        let mut heartbeat_routine: Option<JoinHandle<cluster_node::Result<()>>> = None;
+
         loop {
-            match self.subscriber.recv().await {
-                Ok(_) => todo!("unimplemented"),
-                Err(err) => {
-                    // Tracing would be nice here..
-                    eprintln!("error received for server {}: {err:?}", self.id);
-                    return Err(err);
+            tokio::select! {
+                res = subscriber.recv() => {
+                    match res {
+                        Ok(_) => todo!("unimplemented"),
+                        // Tracing would be nice here..
+                        Err(err) => return Err(cluster_node::ClusterNodeError::ClusterConnectionError(
+                            server_id,
+                            err.into(),
+                        ))
+                    }
+                }
+                res = state_clone.changed() => {
+                    match res {
+                        Ok(_) => {
+                            let new_state = *state_clone.borrow_and_update();
+                            match new_state {
+                                ServerState::Leader if heartbeat_routine.is_none() => {
+                                    let server = Arc::clone(&self);
+                                    let mut state_clone = state_clone.clone();
+
+                                    let routine = tokio::spawn(async move {
+                                        let mut interval = time::interval(time::Duration::from_millis(1000));
+                                        interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+                                        interval.tick().await;
+
+                                        loop {
+                                            tokio::select! {
+                                                _ = interval.tick() => {
+                                                    if let Err(err) = server.append_entries(vec![]).await {
+                                                        return Err(cluster_node::ClusterNodeError::HeartbeatError(
+                                                            server_id,
+                                                            err.into(),
+                                                        ))
+                                                    }
+                                                }
+                                                res = state_clone.changed() => {
+                                                    match res {
+                                                        Ok(_) => break,
+                                                        Err(err) => return Err(cluster_node::ClusterNodeError::HeartbeatError(
+                                                            server_id,
+                                                            err.into(),
+                                                        ))
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Ok(())
+                                    });
+
+                                    heartbeat_routine = Some(routine);
+                                }
+                                ServerState::Leader => {},
+                                _ => {
+                                    if let Some(routine) = heartbeat_routine.take() {
+                                        routine.abort();
+                                    }
+                                }
+                            }
+                        },
+                        Err(err) => return Err(cluster_node::ClusterNodeError::HeartbeatError(
+                            server_id,
+                            err.into(),
+                        )),
+                    }
                 }
             }
         }
