@@ -18,15 +18,11 @@ pub enum RequestBody {
 pub struct ServerRequest {
     term: usize,
     responder: mpsc::Sender<ServerResponse>,
-    body: Option<RequestBody>,
+    body: RequestBody,
 }
 
 impl ServerRequest {
-    pub fn new(
-        term: usize,
-        responder: mpsc::Sender<ServerResponse>,
-        body: Option<RequestBody>,
-    ) -> Self {
+    pub fn new(term: usize, responder: mpsc::Sender<ServerResponse>, body: RequestBody) -> Self {
         Self {
             term,
             responder,
@@ -38,7 +34,7 @@ impl ServerRequest {
         self.term
     }
 
-    pub fn body(&self) -> &Option<RequestBody> {
+    pub fn body(&self) -> &RequestBody {
         &self.body
     }
 }

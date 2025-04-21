@@ -1,6 +1,6 @@
 pub mod rpc;
 
-use rpc::ServerRequest;
+use rpc::{RequestBody, ServerRequest};
 use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{broadcast, mpsc, watch},
@@ -8,7 +8,7 @@ use tokio::{
     time,
 };
 
-use crate::cluster_node;
+use crate::{cluster_node, naive_logging};
 
 /// At any given time each server is in one of three states:
 /// leader, follower, or candidate.
@@ -43,10 +43,13 @@ impl Server {
         publisher: broadcast::Sender<rpc::ServerRequest>,
         subscriber: broadcast::Receiver<rpc::ServerRequest>,
     ) -> Self {
+        let id = uuid::Uuid::new_v4();
+        naive_logging::log(id, "initialised.");
+
         let (state_tx, state) = watch::channel(ServerState::Follower);
 
         Self {
-            id: uuid::Uuid::new_v4(),
+            id,
             state,
             state_tx,
             current_term: 0,
@@ -82,7 +85,7 @@ impl Server {
         self.publisher.send(rpc::ServerRequest::new(
             self.current_term,
             responder,
-            Some(rpc::RequestBody::RequestVote {}),
+            rpc::RequestBody::RequestVote {},
         ))?;
 
         // Do something with this in a thread
@@ -94,18 +97,23 @@ impl Server {
     /// `AppendEntries` RPCs are initiated by leaders to replicate log entries
     /// and to provide a form of heartbeat.
     pub async fn append_entries(&self, entries: Vec<String>) -> anyhow::Result<()> {
+        naive_logging::log(
+            self.id,
+            &format!("sending APPEND_ENTRIES with {} entries", entries.len()),
+        );
+
         let (responder, receiver) = mpsc::channel(Self::MESSAGE_BUFFER_SIZE);
 
         self.publisher.send(rpc::ServerRequest::new(
             self.current_term,
             responder,
-            Some(rpc::RequestBody::AppendEntries {
+            rpc::RequestBody::AppendEntries {
                 leader_id: self.id,
                 entries,
                 prev_log_index: 0,
                 prev_log_term: 0,
                 leader_commit: 0,
-            }),
+            },
         ))?;
 
         // Do something with this in a thread
@@ -124,11 +132,7 @@ impl Server {
 
 impl cluster_node::ClusterNode for Server {
     async fn run(self: Arc<Self>) -> Result<uuid::Uuid, cluster_node::ClusterNodeError> {
-        // check if the server is a leader
-        // if it is, run the heartbeat at intervals
-        // if that changes, stop the heartbeat routine
-        // if it becomes a leader again, start the routine again
-        // fail gracefully
+        naive_logging::log(self.id, "running...");
 
         let server_id = self.id;
         let mut subscriber = self.publisher.subscribe();
@@ -140,7 +144,14 @@ impl cluster_node::ClusterNode for Server {
             tokio::select! {
                 res = subscriber.recv() => {
                     match res {
-                        Ok(_) => todo!("unimplemented"),
+                        Ok(request) => {
+                            match request.body() {
+                                RequestBody::AppendEntries { leader_id, .. } => {
+                                    naive_logging::log(self.id, &format!("received APPEND_ENTRIES from {}", leader_id));
+                                }
+                                _ => todo!("unimplemented")
+                            }
+                        },
                         // Tracing would be nice here..
                         Err(err) => return Err(cluster_node::ClusterNodeError::ClusterConnectionError(
                             server_id,
