@@ -5,9 +5,17 @@ use tokio::{
 
 use crate::{naive_logging, server::rpc};
 
+#[derive(Debug, PartialEq)]
+pub enum SyncTermSideEffect {
+    Downgrade,
+    None,
+}
+
 #[derive(Debug)]
 pub struct ClusterConnection {
     node_id: uuid::Uuid,
+    /// Latest term Server has seen. Iinitialised to 0 on first boot,
+    /// increases monotonically.
     current_term: usize,
     tx: broadcast::Sender<rpc::ServerRequest>,
     rx: broadcast::Receiver<rpc::ServerRequest>,
@@ -80,16 +88,25 @@ impl ClusterConnection {
         Ok(receiver)
     }
 
-    pub fn current_term(&self) -> usize {
-        self.current_term
-    }
-
     pub fn node_id(&self) -> uuid::Uuid {
         self.node_id
     }
 
+    pub fn current_term(&self) -> usize {
+        self.current_term
+    }
+
+    pub fn sync_term(&mut self, sender_term: usize) -> SyncTermSideEffect {
+        if self.current_term < sender_term {
+            self.current_term = sender_term;
+            return SyncTermSideEffect::Downgrade;
+        }
+
+        return SyncTermSideEffect::None;
+    }
+
     pub fn increment_term(&mut self) {
-        self.current_term += 1;
+        self.current_term += 1
     }
 
     pub async fn recv(&mut self) -> Result<rpc::ServerRequest, broadcast::error::RecvError> {

@@ -12,7 +12,7 @@ use tokio::{
 
 use crate::{cluster_node, naive_logging};
 
-/// At any given time each server is in one of three modes:
+/// At any given time each server is in one of three states:
 /// leader, follower, or candidate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ServerMode {
@@ -27,9 +27,6 @@ pub struct Server {
     id: uuid::Uuid,
     mode: watch::Receiver<ServerMode>,
     mode_tx: watch::Sender<ServerMode>,
-    /// Latest term Server has seen. Iinitialised to 0 on first boot,
-    /// increases monotonically.
-    current_term: usize,
     cluster_conn: Arc<Mutex<cluster_connection::ClusterConnection>>,
     election_timeout: time::Duration,
 }
@@ -39,8 +36,6 @@ pub struct Server {
 /// - `RequestVote`
 /// - `AppendEntries`
 impl Server {
-    const MESSAGE_BUFFER_SIZE: usize = 32;
-
     pub fn new(
         publisher: broadcast::Sender<rpc::ServerRequest>,
         subscriber: broadcast::Receiver<rpc::ServerRequest>,
@@ -59,7 +54,6 @@ impl Server {
             id,
             mode,
             mode_tx,
-            current_term: 0,
             cluster_conn,
             election_timeout,
         }
@@ -68,18 +62,23 @@ impl Server {
     /// Current terms are exchanged whenever Servers communicate; if
     /// one Server’s current term is smaller than the other’s, then it updates
     /// its current term to the larger value.
-    fn sync_term(&mut self, request: &rpc::ServerRequest) {
-        let sender_term = request.term();
-
-        if self.current_term < sender_term {
-            self.current_term = sender_term;
-            self.revert_to_follower();
+    async fn sync_term(
+        &mut self,
+        request: &rpc::ServerRequest,
+    ) -> Result<(), watch::error::SendError<ServerMode>> {
+        if let cluster_connection::SyncTermSideEffect::Downgrade = {
+            let mut conn = self.cluster_conn.lock().await;
+            conn.sync_term(request.term())
+        } {
+            return self.downgrade_to_follower();
         }
+
+        Ok(())
     }
 
     /// If a candidate or leader discovers that its term is out of date, it
     /// immediately reverts to follower mode.
-    fn revert_to_follower(&mut self) -> Result<(), watch::error::SendError<ServerMode>> {
+    fn downgrade_to_follower(&mut self) -> Result<(), watch::error::SendError<ServerMode>> {
         if *self.mode.borrow() != ServerMode::Follower {
             return self.mode_tx.send(ServerMode::Follower);
         }
@@ -110,7 +109,7 @@ impl cluster_node::ClusterNode for Server {
         naive_logging::log(self.id, "running...");
 
         let server_id = self.id;
-        let mut mode_clone = self.mode.clone();
+        let mut mode = self.mode.clone();
         let cluster_conn = self.cluster_conn.clone();
 
         let mut heartbeat_routine: Option<JoinHandle<cluster_node::Result<()>>> = None;
@@ -119,7 +118,7 @@ impl cluster_node::ClusterNode for Server {
         let recv_timeout = time::sleep(self.election_timeout);
         tokio::pin!(recv_timeout);
 
-        let reset_timeout = |timeout: &mut pin::Pin<&mut time::Sleep>| {
+        let reset_timeout = async |timeout: &mut pin::Pin<&mut time::Sleep>| {
             timeout
                 .as_mut()
                 .reset(time::Instant::now() + self.election_timeout)
@@ -130,16 +129,18 @@ impl cluster_node::ClusterNode for Server {
 
             tokio::select! {
                 _ = &mut recv_timeout => {
-                    naive_logging::log(self.id, "timed out waiting for a response...");
-                    naive_logging::log(self.id, "starting election...");
-                    if let Err(err) = self.upgrade_to_candidate() {
-                        return Err(cluster_node::ClusterNodeError::UnexpectedError(
-                            err.into(),
-                        ));
+                    if *mode.borrow() != ServerMode::Candidate {
+                        naive_logging::log(self.id, "timed out waiting for a response...");
+                        naive_logging::log(self.id, "starting election...");
+                        if let Err(err) = self.upgrade_to_candidate() {
+                            return Err(cluster_node::ClusterNodeError::UnexpectedError(
+                                err.into(),
+                            ));
+                        }
                     }
 
                     // Reset the election timeout:
-                    reset_timeout(&mut recv_timeout);
+                    reset_timeout(&mut recv_timeout).await;
                 },
                 res = conn.recv() => {
                     match res {
@@ -148,15 +149,15 @@ impl cluster_node::ClusterNode for Server {
                                 rpc::RequestBody::AppendEntries { leader_id, .. } => {
                                     if conn.node_id().ne(leader_id) {
                                         // Received request from leader; reset the election timeout:
-                                        reset_timeout(&mut recv_timeout);
+                                        reset_timeout(&mut recv_timeout).await;
                                         naive_logging::log(self.id, &format!("received APPEND_ENTRIES from {}", leader_id));
                                     }
                                 }
                                 rpc::RequestBody::RequestVote { candidate_id, .. } => {
                                     if conn.node_id().ne(candidate_id) {
                                         // Received request from leader; reset the election timeout:
-                                        reset_timeout(&mut recv_timeout);
-                                        naive_logging::log(self.id, &format!("received REQUEST_VOTE from {} with term {}", candidate_id, conn.current_term()));
+                                        reset_timeout(&mut recv_timeout).await;
+                                        naive_logging::log(self.id, &format!("received REQUEST_VOTE from {} with term {}", candidate_id, request.term()));
                                     }
                                 }
                             }
@@ -168,10 +169,10 @@ impl cluster_node::ClusterNode for Server {
                         ))
                     }
                 }
-                res = mode_clone.changed() => {
+                res = mode.changed() => {
                     match res {
                         Ok(_) => {
-                            let new_mode = *mode_clone.borrow_and_update();
+                            let new_mode = *mode.borrow_and_update();
                             match new_mode {
                                 ServerMode::Leader  => {
                                     if let Some(routine) = election_routine.take() {
@@ -180,7 +181,7 @@ impl cluster_node::ClusterNode for Server {
 
                                     if heartbeat_routine.is_none() {
                                         let cluster_conn = cluster_conn.clone();
-                                        let mut heartbeat_mode_clone = mode_clone.clone();
+                                        let mut heartbeat_mode = mode.clone();
 
                                         let routine = tokio::spawn(async move {
                                             let mut interval = time::interval(time::Duration::from_millis(1000));
@@ -197,7 +198,7 @@ impl cluster_node::ClusterNode for Server {
                                                             ))
                                                         }
                                                     }
-                                                    res = heartbeat_mode_clone.changed() => {
+                                                    res = heartbeat_mode.changed() => {
                                                         match res {
                                                             Ok(_) => break,
                                                             Err(err) => return Err(cluster_node::ClusterNodeError::HeartbeatError(
@@ -222,7 +223,7 @@ impl cluster_node::ClusterNode for Server {
 
                                     if election_routine.is_none() {
                                         let cluster_conn = cluster_conn.clone();
-                                        let mut election_mode_clone = mode_clone.clone();
+                                        let mut election_mode = mode.clone();
 
                                         let routine = tokio::spawn(async move {
                                             let mut interval = time::interval(time::Duration::from_millis(1000));
@@ -241,7 +242,7 @@ impl cluster_node::ClusterNode for Server {
                                                             ))
                                                         }
                                                     }
-                                                    res = election_mode_clone.changed() => {
+                                                    res = election_mode.changed() => {
                                                         match res {
                                                             Ok(_) => break,
                                                             Err(err) => return Err(cluster_node::ClusterNodeError::HeartbeatError(
@@ -278,6 +279,12 @@ impl cluster_node::ClusterNode for Server {
                 }
             }
         }
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        naive_logging::log(self.id, "Shutting down...");
     }
 }
 
