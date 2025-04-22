@@ -36,13 +36,21 @@ impl ServerRequest {
     pub fn body(&self) -> &RequestBody {
         &self.body
     }
+
+    pub async fn respond(
+        &self,
+        term: usize,
+        body: ResponseBody,
+    ) -> Result<(), mpsc::error::SendError<ServerResponse>> {
+        self.responder.send(ServerResponse { term, body }).await
+    }
 }
 
 /// ResponseBody represents the body of a ServerResponse
 #[derive(Clone, Debug)]
 pub enum ResponseBody {
-    AppendEntries { term: usize, success: bool },
-    RequestVote { term: usize, vote_granted: bool },
+    AppendEntries { success: bool },
+    RequestVote { vote_granted: bool },
 }
 
 /// ServerResponse represents a response received from a Server.
@@ -50,4 +58,10 @@ pub enum ResponseBody {
 pub struct ServerResponse {
     term: usize,
     body: ResponseBody,
+}
+
+impl ServerResponse {
+    pub fn body(&self) -> &ResponseBody {
+        &self.body
+    }
 }
