@@ -1,6 +1,4 @@
-use std::num::NonZeroU64;
-
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 
 use crate::{cluster_node, server, timeout};
 
@@ -13,13 +11,13 @@ pub struct Cluster {
     nodes: Vec<cluster_node::ClusterNodeHandle>,
     publisher: Publisher,
     subscriber: Subscriber,
-    node_count: NonZeroU64,
+    node_count: u64,
     min_election_timeout_ms: u64,
     max_election_timeout_ms: u64,
 }
 
 impl Cluster {
-    const DEFAULT_NODE_COUNT: NonZeroU64 = NonZeroU64::new(5).unwrap();
+    const DEFAULT_NODE_COUNT: u64 = 5;
     const DEFAULT_MESSAGE_BUFFER_SIZE: usize = 32;
     const DEFAULT_MIN_ELECTION_TIMEOUT_MS: u64 = 300;
     const DEFAULT_MAX_ELECTION_TIMEOUT_MS: u64 = 500;
@@ -34,7 +32,8 @@ impl Cluster {
         }
     }
 
-    pub fn with_node_count(mut self, node_count: NonZeroU64) -> Self {
+    pub fn with_node_count(mut self, node_count: u64) -> Self {
+        assert!(node_count > 0);
         self.node_count = node_count;
         self
     }
@@ -52,14 +51,18 @@ impl Cluster {
     ) -> &mut Self {
         let publisher = self.publisher.clone();
         let subscriber = publisher.subscribe();
-        let mut node = node_init(publisher, subscriber);
+        let node = node_init(publisher, subscriber);
         let handle = tokio::spawn(async move { node.run().await });
         self.nodes.push(handle);
         self
     }
 
     pub async fn run(mut self) {
-        for _ in 0..self.node_count.into() {
+        let (cluster_node_count_tx, _) = watch::channel::<u64>(self.node_count);
+
+        for _ in 0..self.node_count {
+            let cluster_node_count = cluster_node_count_tx.subscribe();
+
             self.register_node(Box::new(move |tx, rx| {
                 server::Server::new(
                     tx,
@@ -68,6 +71,7 @@ impl Cluster {
                         self.min_election_timeout_ms,
                         self.max_election_timeout_ms,
                     ),
+                    cluster_node_count,
                 )
             }))
             .await;

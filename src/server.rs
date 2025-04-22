@@ -31,6 +31,8 @@ pub struct Server {
     cluster_conn: Arc<Mutex<cluster_connection::ClusterConnection>>,
     timeout_range: timeout::TimeoutRange,
     voted_for: RwLock<Option<uuid::Uuid>>,
+
+    cluster_node_count: watch::Receiver<u64>,
 }
 
 /// Raft servers communicate using remote procedure calls (RPCs), and the basic
@@ -42,6 +44,7 @@ impl Server {
         publisher: broadcast::Sender<rpc::ServerRequest>,
         subscriber: broadcast::Receiver<rpc::ServerRequest>,
         timeout_range: timeout::TimeoutRange,
+        cluster_node_count: watch::Receiver<u64>,
     ) -> Self {
         let id = uuid::Uuid::new_v4();
         naive_logging::log(id, "initialised.");
@@ -58,6 +61,8 @@ impl Server {
             cluster_conn,
             timeout_range,
             voted_for: RwLock::new(None),
+
+            cluster_node_count,
         }
     }
 
@@ -389,7 +394,14 @@ mod tests {
     #[test]
     fn starts() -> anyhow::Result<()> {
         let (publisher, subscriber) = broadcast::channel(TEST_CANNEL_CAPACITY);
-        let _ = Server::new(publisher, subscriber, timeout::TimeoutRange::new(10, 20));
+        let (_, cluster_node_count) = watch::channel(1);
+
+        let _ = Server::new(
+            publisher,
+            subscriber,
+            timeout::TimeoutRange::new(10, 20),
+            cluster_node_count,
+        );
 
         Ok(())
     }
