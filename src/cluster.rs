@@ -123,7 +123,7 @@ mod tests {
     }
 
     impl cluster_node::ClusterNode for MockServer {
-        async fn run(self: &mut Self) -> cluster_node::Result<uuid::Uuid> {
+        async fn run(&self) -> cluster_node::Result<uuid::Uuid> {
             Ok(self.id)
         }
     }

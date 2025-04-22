@@ -61,6 +61,10 @@ pub struct ServerResponse {
 }
 
 impl ServerResponse {
+    pub fn term(&self) -> usize {
+        self.term
+    }
+
     pub fn body(&self) -> &ResponseBody {
         &self.body
     }

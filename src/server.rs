@@ -65,7 +65,7 @@ impl Server {
     /// one Server’s current term is smaller than the other’s, then it updates
     /// its current term to the larger value.
     async fn sync_term(
-        &mut self,
+        &self,
         request: &rpc::ServerRequest,
     ) -> Result<(), watch::error::SendError<ServerMode>> {
         if let cluster_connection::SyncTermSideEffect::Downgrade = {
@@ -116,7 +116,7 @@ impl Server {
 }
 
 impl cluster_node::ClusterNode for Server {
-    async fn run(self: &mut Self) -> Result<uuid::Uuid, cluster_node::ClusterNodeError> {
+    async fn run(&self) -> Result<uuid::Uuid, cluster_node::ClusterNodeError> {
         naive_logging::log(self.id, "running...");
 
         let server_id = self.id;
@@ -163,23 +163,28 @@ impl cluster_node::ClusterNode for Server {
                                         // Received request from leader; reset the election timeout:
                                         reset_timeout(&mut recv_timeout);
                                         naive_logging::log(self.id, &format!("received APPEND_ENTRIES from {leader_id}"));
-                                        if request.term() >= conn.current_term() {
+
+                                        let is_stale_request = request.term() < conn.current_term();
+
+                                        if is_stale_request {
+                                            naive_logging::log(self.id, &format!("rejecting request from stale leader {leader_id}"));
+                                        } else {
                                             naive_logging::log(self.id, &format!("acknowledging new leader {leader_id}, downgrading to follower..."));
+                                        }
 
-                                            if let Err(err) = self.downgrade_to_follower() {
-                                                return Err(cluster_node::ClusterNodeError::UnexpectedError(
-                                                    err.into(),
-                                                ));
-                                            }
+                                        if let Err(err) = request.respond(
+                                            conn.current_term(),
+                                            rpc::ResponseBody::AppendEntries { success: !is_stale_request },
+                                        ).await {
+                                            return Err(cluster_node::ClusterNodeError::UnexpectedError(
+                                                err.into(),
+                                            ));
+                                        }
 
-                                            if let Err(err) = request.respond(
-                                                conn.current_term(),
-                                                rpc::ResponseBody::AppendEntries { success: true }
-                                            ).await {
-                                                return Err(cluster_node::ClusterNodeError::UnexpectedError(
-                                                    err.into(),
-                                                ));
-                                            }
+                                        if let Err(err) = self.sync_term(&request).await {
+                                            return Err(cluster_node::ClusterNodeError::UnexpectedError(
+                                                err.into(),
+                                            ));
                                         }
                                     }
                                 }
@@ -189,6 +194,46 @@ impl cluster_node::ClusterNode for Server {
                                         reset_timeout(&mut recv_timeout);
                                         naive_logging::log(self.id, &format!("received REQUEST_VOTE from {} with term {}", candidate_id, request.term()));
 
+                                        let is_stale_request = request.term() < conn.current_term();
+
+                                        let (has_not_yet_voted, should_grant_vote) = {
+                                            let voted_for = match self.voted_for.read() {
+                                                Ok(id) => id,
+                                                Err(err) => return Err(cluster_node::ClusterNodeError::UnexpectedError(
+                                                    anyhow::anyhow!("could not read current vote for server {}: {:?}", self.id, err),
+                                                ))
+                                            };
+
+                                            let has_not_yet_voted = voted_for.is_none();
+                                            let should_grant_vote = !is_stale_request && voted_for.is_none_or(|id| id.eq(candidate_id));
+
+                                            (has_not_yet_voted, should_grant_vote)
+                                        };
+
+                                        if should_grant_vote {
+                                            naive_logging::log(self.id, &format!("granting vote to candidate {candidate_id}, downgrading to follower..."));
+                                        } else {
+                                            naive_logging::log(self.id, &format!("refusing vote for candidate {candidate_id}"));
+                                        }
+
+                                        if let Err(err) = request.respond(
+                                            conn.current_term(),
+                                            rpc::ResponseBody::RequestVote { vote_granted: should_grant_vote },
+                                        ).await {
+                                            return Err(cluster_node::ClusterNodeError::UnexpectedError(
+                                                err.into(),
+                                            ));
+                                        }
+
+                                        if let Err(err) = self.sync_term(&request).await {
+                                            return Err(cluster_node::ClusterNodeError::UnexpectedError(
+                                                err.into(),
+                                            ));
+                                        }
+
+                                        if has_not_yet_voted {
+                                            self.vote(*candidate_id);
+                                        }
                                     }
                                 }
                             }
@@ -268,10 +313,11 @@ impl cluster_node::ClusterNode for Server {
                                                         conn.increment_term();
                                                         match conn.request_vote().await {
                                                             Ok(mut rx) => {
+                                                                // This likely needs to exist in a separate routine... verify.
                                                                 while let Some(response) = rx.recv().await {
                                                                     match response.body() {
-                                                                        rpc::ResponseBody::RequestVote { term, vote_granted } => {
-                                                                            if *term == conn.current_term() && *vote_granted {
+                                                                        rpc::ResponseBody::RequestVote { vote_granted } => {
+                                                                            if response.term() == conn.current_term() && *vote_granted {
                                                                                 naive_logging::log(server_id, &format!("received vote for this term"))
                                                                             }
                                                                         },
