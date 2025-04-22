@@ -1,7 +1,6 @@
 mod cluster_connection;
 pub mod rpc;
 
-use std::cell::RefCell;
 use std::pin;
 use std::sync::{Arc, RwLock};
 use tokio::sync::Mutex;
@@ -31,8 +30,6 @@ pub struct Server {
     cluster_conn: Arc<Mutex<cluster_connection::ClusterConnection>>,
     timeout_range: timeout::TimeoutRange,
     voted_for: RwLock<Option<uuid::Uuid>>,
-
-    cluster_node_count: watch::Receiver<u64>,
 }
 
 /// Raft servers communicate using remote procedure calls (RPCs), and the basic
@@ -51,7 +48,12 @@ impl Server {
 
         let (mode_tx, mode) = watch::channel(ServerMode::Follower);
 
-        let cluster_conn = cluster_connection::ClusterConnection::new(id, publisher, subscriber);
+        let cluster_conn = cluster_connection::ClusterConnection::new(
+            id,
+            publisher,
+            subscriber,
+            cluster_node_count,
+        );
         let cluster_conn = Arc::new(Mutex::new(cluster_conn));
 
         Self {
@@ -61,8 +63,6 @@ impl Server {
             cluster_conn,
             timeout_range,
             voted_for: RwLock::new(None),
-
-            cluster_node_count,
         }
     }
 
@@ -73,10 +73,9 @@ impl Server {
         &self,
         request: &rpc::ServerRequest,
     ) -> Result<(), watch::error::SendError<ServerMode>> {
-        if let cluster_connection::SyncTermSideEffect::Downgrade = {
-            let mut conn = self.cluster_conn.lock().await;
-            conn.sync_term(request.term())
-        } {
+        let effect = { self.cluster_conn.lock().await.sync_term(request.term()) };
+        println!("I GET HURR");
+        if let cluster_connection::SyncTermSideEffect::Downgrade = effect {
             return self.downgrade_to_follower();
         }
 
@@ -148,12 +147,22 @@ impl cluster_node::ClusterNode for Server {
                     if *mode.borrow() != ServerMode::Candidate {
                         naive_logging::log(self.id, "timed out waiting for a response...");
                         naive_logging::log(self.id, "starting election...");
+
+                        if let Some(routine) = heartbeat_routine.take() {
+                            routine.abort();
+                        }
+
+                        if let Some(routine) = election_routine.take() {
+                            routine.abort();
+                        }
+
+                        self.vote(self.id);
+
                         if let Err(err) = self.upgrade_to_candidate() {
                             return Err(cluster_node::ClusterNodeError::UnexpectedError(
                                 err.into(),
                             ));
                         }
-                        self.vote(self.id);
                     }
 
                     // Reset the election timeout:
@@ -186,6 +195,8 @@ impl cluster_node::ClusterNode for Server {
                                             ));
                                         }
 
+                                        // If you don't drop `conn`, `sync_term` will deadlock.
+                                        drop(conn);
                                         if let Err(err) = self.sync_term(&request).await {
                                             return Err(cluster_node::ClusterNodeError::UnexpectedError(
                                                 err.into(),
@@ -195,11 +206,8 @@ impl cluster_node::ClusterNode for Server {
                                 }
                                 rpc::RequestBody::RequestVote { candidate_id, .. } => {
                                     if conn.node_id().ne(candidate_id) {
-                                        // Received request from leader; reset the election timeout:
-                                        reset_timeout(&mut recv_timeout);
+                                        // Received request from candidate:
                                         naive_logging::log(self.id, &format!("received REQUEST_VOTE from {} with term {}", candidate_id, request.term()));
-
-                                        let is_stale_request = request.term() < conn.current_term();
 
                                         let (has_not_yet_voted, should_grant_vote) = {
                                             let voted_for = match self.voted_for.read() {
@@ -210,13 +218,14 @@ impl cluster_node::ClusterNode for Server {
                                             };
 
                                             let has_not_yet_voted = voted_for.is_none();
-                                            let should_grant_vote = !is_stale_request && voted_for.is_none_or(|id| id.eq(candidate_id));
+                                            let should_grant_vote = request.term() >= conn.current_term() && voted_for.is_none_or(|id| id.eq(candidate_id));
 
                                             (has_not_yet_voted, should_grant_vote)
                                         };
 
                                         if should_grant_vote {
                                             naive_logging::log(self.id, &format!("granting vote to candidate {candidate_id}, downgrading to follower..."));
+                                            reset_timeout(&mut recv_timeout);
                                         } else {
                                             naive_logging::log(self.id, &format!("refusing vote for candidate {candidate_id}"));
                                         }
@@ -230,6 +239,8 @@ impl cluster_node::ClusterNode for Server {
                                             ));
                                         }
 
+                                        // If you don't drop `conn`, `sync_term` will deadlock.
+                                        drop(conn);
                                         if let Err(err) = self.sync_term(&request).await {
                                             return Err(cluster_node::ClusterNodeError::UnexpectedError(
                                                 err.into(),
@@ -272,7 +283,7 @@ impl cluster_node::ClusterNode for Server {
                                             loop {
                                                 tokio::select! {
                                                     _ = interval.tick() => {
-                                                        if let Err(err) = cluster_conn.lock().await.append_entries(vec![]).await {
+                                                        if let Err(err) = {cluster_conn.lock().await.append_entries(vec![]).await} {
                                                             return Err(cluster_node::ClusterNodeError::HeartbeatError(
                                                                 server_id,
                                                                 err.into(),
@@ -306,47 +317,58 @@ impl cluster_node::ClusterNode for Server {
                                         let cluster_conn = cluster_conn.clone();
                                         let mut election_mode = mode.clone();
 
+                                        // TODO: return errors in parallel threads back to main thread.
                                         let routine = tokio::spawn(async move {
-                                            let mut interval = time::interval(time::Duration::from_millis(1000));
-                                            interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
-                                            interval.tick().await;
+                                            let handle_election = async || {
+                                                let mut conn = cluster_conn.lock().await;
+                                                conn.increment_term();
+                                                match conn.request_vote().await {
+                                                    Ok(mut rx) => {
+                                                        // This likely needs to exist in a separate routine... verify.
 
-                                            loop {
-                                                tokio::select! {
-                                                    _ = interval.tick() => {
-                                                        let mut conn = cluster_conn.lock().await;
-                                                        conn.increment_term();
-                                                        match conn.request_vote().await {
-                                                            Ok(mut rx) => {
-                                                                // This likely needs to exist in a separate routine... verify.
-                                                                while let Some(response) = rx.recv().await {
-                                                                    match response.body() {
-                                                                        rpc::ResponseBody::RequestVote { vote_granted } => {
-                                                                            if response.term() == conn.current_term() && *vote_granted {
-                                                                                naive_logging::log(server_id, &format!("received vote for this term"))
-                                                                            }
-                                                                        },
-                                                                        rpc::ResponseBody::AppendEntries { .. } => return Err(cluster_node::ClusterNodeError::UnexpectedError(
-                                                                            anyhow::anyhow!("invalid response [AppendEntries] to RequestVote RPC"),
-                                                                        )),
+                                                        let cluster_node_count_at_start_of_term = conn.cluster_node_count();
+                                                        let mut total_votes_over_term = 0u64;
+
+                                                        while let Some(response) = rx.recv().await {
+                                                            match response.body() {
+                                                                rpc::ResponseBody::RequestVote { vote_granted } => {
+                                                                    if *vote_granted {
+                                                                        naive_logging::log(server_id, &format!("received vote for this term"));
+                                                                        total_votes_over_term += 1;
+                                                                        if total_votes_over_term * 2 > cluster_node_count_at_start_of_term {
+                                                                            naive_logging::log(server_id, &format!("won election for term {}", conn.current_term()));
+                                                                        }
+
+                                                                        if total_votes_over_term == cluster_node_count_at_start_of_term {
+                                                                            break;
+                                                                        }
                                                                     }
-
-                                                                }
+                                                                },
+                                                                rpc::ResponseBody::AppendEntries { .. } => return Err(cluster_node::ClusterNodeError::UnexpectedError(
+                                                                    anyhow::anyhow!("invalid response [AppendEntries] to RequestVote RPC"),
+                                                                )),
                                                             }
-                                                            Err(err) => return Err(cluster_node::ClusterNodeError::HeartbeatError(
-                                                                server_id,
-                                                                err.into(),
-                                                            ))
                                                         }
+
+                                                        Ok(())
                                                     }
-                                                    res = election_mode.changed() => {
-                                                        match res {
-                                                            Ok(_) => break,
-                                                            Err(err) => return Err(cluster_node::ClusterNodeError::HeartbeatError(
-                                                                server_id,
-                                                                err.into(),
-                                                            ))
-                                                        }
+                                                    Err(err) => return Err(cluster_node::ClusterNodeError::HeartbeatError(
+                                                        server_id,
+                                                        err.into(),
+                                                    ))
+                                                }
+                                            };
+
+                                            tokio::select! {
+                                                _ = handle_election() => {
+                                                    // do something here...
+                                                }
+                                                res = election_mode.changed() => {
+                                                    if let Err(err) = res {
+                                                        return Err(cluster_node::ClusterNodeError::HeartbeatError(
+                                                            server_id,
+                                                            err.into(),
+                                                        ));
                                                     }
                                                 }
                                             }

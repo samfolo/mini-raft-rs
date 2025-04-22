@@ -1,5 +1,5 @@
 use tokio::{
-    sync::{broadcast, mpsc},
+    sync::{broadcast, mpsc, watch},
     time,
 };
 
@@ -19,6 +19,7 @@ pub struct ClusterConnection {
     current_term: usize,
     tx: broadcast::Sender<rpc::ServerRequest>,
     rx: broadcast::Receiver<rpc::ServerRequest>,
+    cluster_node_count: watch::Receiver<u64>,
 }
 
 impl ClusterConnection {
@@ -28,12 +29,14 @@ impl ClusterConnection {
         node_id: uuid::Uuid,
         tx: broadcast::Sender<rpc::ServerRequest>,
         rx: broadcast::Receiver<rpc::ServerRequest>,
+        cluster_node_count: watch::Receiver<u64>,
     ) -> Self {
         Self {
             node_id,
             current_term: 0,
             tx,
             rx,
+            cluster_node_count,
         }
     }
 
@@ -104,6 +107,10 @@ impl ClusterConnection {
 
     pub fn increment_term(&mut self) {
         self.current_term += 1
+    }
+
+    pub fn cluster_node_count(&self) -> u64 {
+        *self.cluster_node_count.borrow()
     }
 
     pub async fn recv(&mut self) -> Result<rpc::ServerRequest, broadcast::error::RecvError> {
