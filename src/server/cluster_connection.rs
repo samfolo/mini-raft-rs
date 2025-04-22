@@ -19,7 +19,7 @@ pub struct ClusterConnection {
     current_term: usize,
     tx: broadcast::Sender<rpc::ServerRequest>,
     rx: broadcast::Receiver<rpc::ServerRequest>,
-    election_timeout: time::Duration,
+    voted_for: Option<uuid::Uuid>,
 }
 
 impl ClusterConnection {
@@ -29,14 +29,13 @@ impl ClusterConnection {
         node_id: uuid::Uuid,
         tx: broadcast::Sender<rpc::ServerRequest>,
         rx: broadcast::Receiver<rpc::ServerRequest>,
-        election_timeout: time::Duration,
     ) -> Self {
         Self {
             node_id,
             current_term: 0,
             tx,
             rx,
-            election_timeout,
+            voted_for: None,
         }
     }
 
@@ -61,6 +60,10 @@ impl ClusterConnection {
         ))?;
 
         Ok(receiver)
+    }
+
+    fn vote(&mut self, candidate_id: uuid::Uuid) {
+        self.voted_for = Some(candidate_id);
     }
 
     /// `AppendEntries` RPCs are initiated by leaders to replicate log entries

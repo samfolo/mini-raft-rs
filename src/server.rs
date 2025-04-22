@@ -10,7 +10,7 @@ use tokio::{
     time,
 };
 
-use crate::{cluster_node, naive_logging};
+use crate::{cluster_node, naive_logging, timeout};
 
 /// At any given time each server is in one of three states:
 /// leader, follower, or candidate.
@@ -28,7 +28,7 @@ pub struct Server {
     mode: watch::Receiver<ServerMode>,
     mode_tx: watch::Sender<ServerMode>,
     cluster_conn: Arc<Mutex<cluster_connection::ClusterConnection>>,
-    election_timeout: time::Duration,
+    timeout_range: timeout::TimeoutRange,
 }
 
 /// Raft servers communicate using remote procedure calls (RPCs), and the basic
@@ -39,15 +39,14 @@ impl Server {
     pub fn new(
         publisher: broadcast::Sender<rpc::ServerRequest>,
         subscriber: broadcast::Receiver<rpc::ServerRequest>,
-        election_timeout: time::Duration,
+        timeout_range: timeout::TimeoutRange,
     ) -> Self {
         let id = uuid::Uuid::new_v4();
         naive_logging::log(id, "initialised.");
 
         let (mode_tx, mode) = watch::channel(ServerMode::Follower);
 
-        let cluster_conn =
-            cluster_connection::ClusterConnection::new(id, publisher, subscriber, election_timeout);
+        let cluster_conn = cluster_connection::ClusterConnection::new(id, publisher, subscriber);
         let cluster_conn = Arc::new(Mutex::new(cluster_conn));
 
         Self {
@@ -55,7 +54,7 @@ impl Server {
             mode,
             mode_tx,
             cluster_conn,
-            election_timeout,
+            timeout_range,
         }
     }
 
@@ -115,13 +114,13 @@ impl cluster_node::ClusterNode for Server {
         let mut heartbeat_routine: Option<JoinHandle<cluster_node::Result<()>>> = None;
         let mut election_routine: Option<JoinHandle<cluster_node::Result<()>>> = None;
 
-        let recv_timeout = time::sleep(self.election_timeout);
+        let recv_timeout = time::sleep(self.timeout_range.random());
         tokio::pin!(recv_timeout);
 
         let reset_timeout = |timeout: &mut pin::Pin<&mut time::Sleep>| {
             timeout
                 .as_mut()
-                .reset(time::Instant::now() + self.election_timeout)
+                .reset(time::Instant::now() + self.timeout_range.random())
         };
 
         loop {
@@ -297,7 +296,7 @@ mod tests {
     #[test]
     fn starts() -> anyhow::Result<()> {
         let (publisher, subscriber) = broadcast::channel(TEST_CANNEL_CAPACITY);
-        let _ = Server::new(publisher, subscriber, time::Duration::from_millis(10));
+        let _ = Server::new(publisher, subscriber, timeout::TimeoutRange::new(10, 20));
 
         Ok(())
     }

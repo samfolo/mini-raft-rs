@@ -1,8 +1,8 @@
 use std::num::NonZeroU64;
 
-use tokio::{sync::broadcast, time};
+use tokio::sync::broadcast;
 
-use crate::{cluster_node, server};
+use crate::{cluster_node, server, timeout};
 
 type Publisher = broadcast::Sender<server::rpc::ServerRequest>;
 type Subscriber = broadcast::Receiver<server::rpc::ServerRequest>;
@@ -13,21 +13,37 @@ pub struct Cluster {
     nodes: Vec<cluster_node::ClusterNodeHandle>,
     publisher: Publisher,
     subscriber: Subscriber,
-    election_timeout: time::Duration,
+    node_count: NonZeroU64,
+    min_election_timeout_ms: u64,
+    max_election_timeout_ms: u64,
 }
 
 impl Cluster {
+    const DEFAULT_NODE_COUNT: NonZeroU64 = NonZeroU64::new(5).unwrap();
     const DEFAULT_MESSAGE_BUFFER_SIZE: usize = 32;
-    const DEFAULT_ELECTION_TIMEOUT_MS: u64 = 1000;
+    const DEFAULT_MIN_ELECTION_TIMEOUT_MS: u64 = 300;
+    const DEFAULT_MAX_ELECTION_TIMEOUT_MS: u64 = 500;
 
-    pub fn new(buffer_size: usize, election_timeout: time::Duration) -> Self {
+    pub fn new(buffer_size: usize) -> Self {
         let (publisher, subscriber) = broadcast::channel(buffer_size);
+
         Self {
-            nodes: Default::default(),
             publisher,
             subscriber,
-            election_timeout,
+            ..Default::default()
         }
+    }
+
+    pub fn with_node_count(mut self, node_count: NonZeroU64) -> Self {
+        self.node_count = node_count;
+        self
+    }
+
+    pub fn with_election_timeout_range(mut self, min: u64, max: u64) -> Self {
+        assert!(min < max);
+        self.min_election_timeout_ms = min;
+        self.max_election_timeout_ms = max;
+        self
     }
 
     async fn register_node<N: cluster_node::ClusterNode + Sync>(
@@ -42,10 +58,17 @@ impl Cluster {
         self
     }
 
-    pub async fn run_with_nodes(mut self, count: NonZeroU64) {
-        for _ in 0..count.into() {
+    pub async fn run(mut self) {
+        for _ in 0..self.node_count.into() {
             self.register_node(Box::new(move |tx, rx| {
-                server::Server::new(tx, rx, self.election_timeout)
+                server::Server::new(
+                    tx,
+                    rx,
+                    timeout::TimeoutRange::new(
+                        self.min_election_timeout_ms,
+                        self.max_election_timeout_ms,
+                    ),
+                )
             }))
             .await;
         }
@@ -56,7 +79,7 @@ impl Cluster {
         }
     }
 
-    pub async fn shutdown(self) {
+    async fn shutdown(self) {
         for node in &self.nodes {
             node.abort();
         }
@@ -74,7 +97,9 @@ impl Default for Cluster {
             nodes: Default::default(),
             publisher,
             subscriber,
-            election_timeout: time::Duration::from_millis(Self::DEFAULT_ELECTION_TIMEOUT_MS),
+            node_count: Self::DEFAULT_NODE_COUNT,
+            min_election_timeout_ms: Self::DEFAULT_MIN_ELECTION_TIMEOUT_MS,
+            max_election_timeout_ms: Self::DEFAULT_MAX_ELECTION_TIMEOUT_MS,
         }
     }
 }
