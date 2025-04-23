@@ -1,5 +1,6 @@
 use tokio::time;
 
+#[derive(Clone)]
 pub struct TimeoutRange {
     min: time::Duration,
     max: time::Duration,

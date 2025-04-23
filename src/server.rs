@@ -73,7 +73,10 @@ impl Server {
         &self,
         request: &rpc::ServerRequest,
     ) -> Result<(), watch::error::SendError<ServerMode>> {
-        let effect = { self.cluster_conn.lock().await.sync_term(request.term()) };
+        let effect = {
+            println!("locked in sync_term");
+            self.cluster_conn.lock().await.sync_term(request.term())
+        };
         println!("I GET HURR");
         if let cluster_connection::SyncTermSideEffect::Downgrade = effect {
             return self.downgrade_to_follower();
@@ -117,6 +120,60 @@ impl Server {
     async fn handle_client_request(&self, _: ()) -> anyhow::Result<()> {
         todo!("unimplemented")
     }
+
+    async fn heartbeat(&self) -> JoinHandle<cluster_node::Result<()>> {
+        let id = self.id;
+        let mut mode = self.mode_tx.subscribe();
+        let cluster_conn = Arc::clone(&self.cluster_conn);
+        let timeout_range = self.timeout_range.clone();
+
+        tokio::spawn(async move {
+            let mut interval = time::interval(time::Duration::from_millis(1000));
+            interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+            interval.tick().await;
+
+            let timeout = time::sleep(timeout_range.random());
+            tokio::pin!(timeout);
+
+            let reset_timeout = |timeout: &mut pin::Pin<&mut time::Sleep>| {
+                timeout
+                    .as_mut()
+                    .reset(time::Instant::now() + timeout_range.random())
+            };
+
+            loop {
+                tokio::select! {
+                    _ = &mut timeout => {
+                        if *mode.borrow() != ServerMode::Leader {
+                            if let Err(err) = {
+                                let conn = cluster_conn.lock().await;
+                                conn.append_entries(vec![]).await
+                            } {
+                                return Err(cluster_node::ClusterNodeError::HeartbeatError(
+                                    id,
+                                    err.into(),
+                                ))
+                            }
+                        }
+
+                        reset_timeout(&mut timeout);
+                    },
+                    res = mode.changed() => {
+                        if let Err(err) = res {
+                            return Err(cluster_node::ClusterNodeError::HeartbeatError(
+                                id,
+                                err.into(),
+                            ));
+                        }
+
+                        if *mode.borrow() == ServerMode::Leader {
+                            timeout.as_mut().reset(time::Instant::now());
+                        }
+                    }
+                }
+            }
+        })
+    }
 }
 
 impl cluster_node::ClusterNode for Server {
@@ -140,6 +197,7 @@ impl cluster_node::ClusterNode for Server {
         };
 
         loop {
+            println!("locked in top_level run loop");
             let mut conn = cluster_conn.lock().await;
 
             tokio::select! {
@@ -195,13 +253,13 @@ impl cluster_node::ClusterNode for Server {
                                             ));
                                         }
 
-                                        // If you don't drop `conn`, `sync_term` will deadlock.
-                                        drop(conn);
-                                        if let Err(err) = self.sync_term(&request).await {
-                                            return Err(cluster_node::ClusterNodeError::UnexpectedError(
-                                                err.into(),
-                                            ));
-                                        }
+                                        if let cluster_connection::SyncTermSideEffect::Downgrade = conn.sync_term(request.term()) {
+                                            if let Err(err) = self.downgrade_to_follower() {
+                                                return Err(cluster_node::ClusterNodeError::UnexpectedError(
+                                                    err.into(),
+                                                ));
+                                            }
+                                        };
                                     }
                                 }
                                 rpc::RequestBody::RequestVote { candidate_id, .. } => {
@@ -239,13 +297,13 @@ impl cluster_node::ClusterNode for Server {
                                             ));
                                         }
 
-                                        // If you don't drop `conn`, `sync_term` will deadlock.
-                                        drop(conn);
-                                        if let Err(err) = self.sync_term(&request).await {
-                                            return Err(cluster_node::ClusterNodeError::UnexpectedError(
-                                                err.into(),
-                                            ));
-                                        }
+                                        if let cluster_connection::SyncTermSideEffect::Downgrade = conn.sync_term(request.term()) {
+                                            if let Err(err) = self.downgrade_to_follower() {
+                                                return Err(cluster_node::ClusterNodeError::UnexpectedError(
+                                                    err.into(),
+                                                ));
+                                            }
+                                        };
 
                                         if has_not_yet_voted {
                                             self.vote(*candidate_id);
@@ -283,7 +341,9 @@ impl cluster_node::ClusterNode for Server {
                                             loop {
                                                 tokio::select! {
                                                     _ = interval.tick() => {
-                                                        if let Err(err) = {cluster_conn.lock().await.append_entries(vec![]).await} {
+                                                        println!("locked in heartbeat_routine loop");
+                                                        let locked_conn = cluster_conn.lock().await;
+                                                        if let Err(err) = locked_conn.append_entries(vec![]).await {
                                                             return Err(cluster_node::ClusterNodeError::HeartbeatError(
                                                                 server_id,
                                                                 err.into(),
@@ -315,12 +375,13 @@ impl cluster_node::ClusterNode for Server {
 
                                     if election_routine.is_none() {
                                         let cluster_conn = cluster_conn.clone();
+                                        let mut conn = cluster_conn.lock().await;
                                         let mut election_mode = mode.clone();
 
                                         // TODO: return errors in parallel threads back to main thread.
                                         let routine = tokio::spawn(async move {
-                                            let handle_election = async || {
-                                                let mut conn = cluster_conn.lock().await;
+                                            let mut handle_election = async move || {
+                                                println!("locked in election_routine loop");
                                                 conn.increment_term();
                                                 match conn.request_vote().await {
                                                     Ok(mut rx) => {
