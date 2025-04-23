@@ -3,7 +3,8 @@ pub mod rpc;
 
 use std::pin;
 use std::sync::{Arc, RwLock};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::time::Sleep;
 use tokio::{
     sync::{broadcast, watch},
     task::JoinHandle,
@@ -121,17 +122,15 @@ impl Server {
         todo!("unimplemented")
     }
 
-    async fn heartbeat(&self) -> JoinHandle<cluster_node::Result<()>> {
+    async fn run_heartbeat_routine(&self) -> JoinHandle<cluster_node::Result<()>> {
+        // TODO: return errors in parallel threads back to main thread.
+
         let id = self.id;
         let mut mode = self.mode_tx.subscribe();
         let cluster_conn = Arc::clone(&self.cluster_conn);
         let timeout_range = self.timeout_range.clone();
 
         tokio::spawn(async move {
-            let mut interval = time::interval(time::Duration::from_millis(1000));
-            interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
-            interval.tick().await;
-
             let timeout = time::sleep(timeout_range.random());
             tokio::pin!(timeout);
 
@@ -144,7 +143,7 @@ impl Server {
             loop {
                 tokio::select! {
                     _ = &mut timeout => {
-                        if *mode.borrow() != ServerMode::Leader {
+                        if *mode.borrow() == ServerMode::Leader {
                             if let Err(err) = {
                                 let conn = cluster_conn.lock().await;
                                 conn.append_entries(vec![]).await
@@ -160,8 +159,7 @@ impl Server {
                     },
                     res = mode.changed() => {
                         if let Err(err) = res {
-                            return Err(cluster_node::ClusterNodeError::HeartbeatError(
-                                id,
+                            return Err(cluster_node::ClusterNodeError::UnexpectedError(
                                 err.into(),
                             ));
                         }
@@ -169,6 +167,148 @@ impl Server {
                         if *mode.borrow() == ServerMode::Leader {
                             timeout.as_mut().reset(time::Instant::now());
                         }
+                    }
+                }
+            }
+        })
+    }
+
+    async fn run_election_routine(&self) -> JoinHandle<cluster_node::Result<()>> {
+        // TODO: return errors in parallel threads back to main thread.
+
+        let id = self.id;
+        let mode_tx = self.mode_tx.clone();
+        let mut req_mode = self.mode_tx.subscribe();
+
+        let cluster_conn = Arc::clone(&self.cluster_conn);
+        let timeout_range = self.timeout_range.clone();
+
+        tokio::spawn(async move {
+            let timeout = time::sleep(timeout_range.random());
+            tokio::pin!(timeout);
+
+            let reset_timeout = |timeout: &mut pin::Pin<&mut time::Sleep>| {
+                timeout
+                    .as_mut()
+                    .reset(time::Instant::now() + timeout_range.random())
+            };
+
+            loop {
+                let (cancel_election, cancel_election_rx) = mpsc::channel(1);
+
+                tokio::select! {
+                    _ = &mut timeout => {
+                        if let Err(err) = cancel_election.send(()).await {
+                            return Err(cluster_node::ClusterNodeError::UnexpectedError(err.into()));
+                        }
+
+                        if *req_mode.borrow() == ServerMode::Candidate {
+                            let request_vote_result = {
+                                let mut conn = cluster_conn.lock().await;
+                                conn.increment_term();
+                                conn.request_vote().await
+                            };
+
+                            match request_vote_result {
+                                Ok(request_vote_rx) => {
+                                    let mode = mode_tx.subscribe();
+                                    let (current_term, current_cluster_node_count) = {
+                                        let conn = cluster_conn.lock().await;
+                                        (conn.current_term(), conn.cluster_node_count())
+                                    };
+
+                                    // TODO: tally votes in this method and trigger mode changes:
+                                    Self::handle_election_response(
+                                        id,
+                                        current_term,
+                                        current_cluster_node_count,
+                                        mode,
+                                        request_vote_rx,
+                                        cancel_election_rx,
+                                    );
+                                },
+                                Err(err) => {
+                                    return Err(cluster_node::ClusterNodeError::UnexpectedError(err.into()));
+                                }
+                            };
+                        }
+
+                        reset_timeout(&mut timeout);
+                    },
+                    res = req_mode.changed() => {
+                        if let Err(err) = res {
+                            return Err(cluster_node::ClusterNodeError::HeartbeatError(
+                                id,
+                                err.into(),
+                            ));
+                        }
+
+                        if *req_mode.borrow() == ServerMode::Leader {
+                            timeout.as_mut().reset(time::Instant::now());
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    fn handle_election_response(
+        id: uuid::Uuid,
+        current_term: usize,
+        initial_node_count: u64,
+        mut mode: watch::Receiver<ServerMode>,
+        mut request_vote_rx: mpsc::Receiver<rpc::ServerResponse>,
+        mut cancel_election_rx: mpsc::Receiver<()>,
+    ) -> JoinHandle<cluster_node::Result<()>> {
+        // TODO: return errors in parallel threads back to main thread.
+
+        tokio::spawn(async move {
+            let mut total_votes_over_term = 0u64;
+
+            loop {
+                tokio::select! {
+                    Some(res) = request_vote_rx.recv() => {
+                        match res.body() {
+                            rpc::ResponseBody::RequestVote { vote_granted } => {
+                                if *vote_granted {
+                                    naive_logging::log(
+                                        id,
+                                        &format!("received vote for this term"),
+                                    );
+                                    total_votes_over_term += 1;
+                                    if total_votes_over_term * 2 > initial_node_count {
+                                        naive_logging::log(
+                                            id,
+                                            &format!("won election for term {current_term}"),
+                                        );
+                                    }
+
+                                    if total_votes_over_term == initial_node_count {
+                                        return Ok(());
+                                    }
+                                }
+                            }
+                            rpc::ResponseBody::AppendEntries { .. } => {
+                                return Err(cluster_node::ClusterNodeError::UnexpectedError(
+                                    anyhow::anyhow!(
+                                        "invalid response [AppendEntries] to RequestVote RPC"
+                                    ),
+                                ));
+                            }
+                        };
+                    },
+                    _ = cancel_election_rx.recv() => {
+                        return Ok(());
+                    },
+                    res = mode.changed() => {
+                        if let Err(err) = res {
+                            // TODO: return errors in parallel threads back to main thread.
+                            return Err(cluster_node::ClusterNodeError::UnexpectedError(
+                                err.into(),
+                            ));
+                        }
+
+                        return Ok(())
                     }
                 }
             }
