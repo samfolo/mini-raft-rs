@@ -37,6 +37,10 @@ impl ServerRequest {
         &self.body
     }
 
+    pub fn can_respond(&self) -> bool {
+        !self.responder.is_closed()
+    }
+
     pub async fn respond(
         &self,
         term: usize,

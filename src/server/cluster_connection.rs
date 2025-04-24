@@ -41,7 +41,12 @@ impl ClusterConnection {
     }
 
     /// `RequestVote` RPCs are initiated by candidates during elections.
-    pub async fn request_vote(&mut self) -> anyhow::Result<mpsc::Receiver<rpc::ServerResponse>> {
+    pub fn request_vote(
+        &mut self,
+    ) -> anyhow::Result<
+        mpsc::Receiver<rpc::ServerResponse>,
+        broadcast::error::SendError<rpc::ServerRequest>,
+    > {
         naive_logging::log(
             self.node_id,
             &format!(
@@ -65,7 +70,7 @@ impl ClusterConnection {
 
     /// `AppendEntries` RPCs are initiated by leaders to replicate log entries
     /// and to provide a form of heartbeat.
-    pub async fn append_entries(
+    pub fn append_entries(
         &self,
         entries: Vec<String>,
     ) -> anyhow::Result<mpsc::Receiver<rpc::ServerResponse>> {

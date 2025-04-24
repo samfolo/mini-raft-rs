@@ -4,7 +4,7 @@ use mini_raft_rs::cluster;
 async fn main() {
     cluster::Cluster::new(1024)
         .with_node_count(5)
-        .with_election_timeout_range(200, 1000)
+        .with_election_timeout_range(800, 1000)
         .run()
         .await;
 }

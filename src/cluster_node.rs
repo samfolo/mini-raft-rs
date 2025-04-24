@@ -1,8 +1,11 @@
 use std::{fmt, sync::Arc};
 
-use tokio::{sync::broadcast, task};
+use tokio::{
+    sync::{broadcast, mpsc},
+    task, time,
+};
 
-use crate::errors;
+use crate::{errors, server::rpc};
 
 pub type Result<T> = anyhow::Result<T, ClusterNodeError>;
 
@@ -17,7 +20,14 @@ pub enum ClusterNodeError {
     #[error("Failed to send heartbeat to cluster")]
     HeartbeatError(uuid::Uuid, #[source] anyhow::Error),
     #[error("Lost connection to cluster")]
-    ClusterConnectionError(uuid::Uuid, #[source] broadcast::error::RecvError),
+    IncomingClusterConnectionError(uuid::Uuid, #[source] broadcast::error::RecvError),
+    #[error("Lost connection to cluster")]
+    OutgoingClusterConnectionError(
+        uuid::Uuid,
+        #[source] broadcast::error::SendError<rpc::ServerRequest>,
+    ),
+    #[error("Timed out waitng for response")]
+    TimeoutError(#[from] time::error::Elapsed),
     #[error("Something went wrong")]
     UnexpectedError(#[from] anyhow::Error),
 }
