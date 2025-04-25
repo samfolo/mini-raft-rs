@@ -97,7 +97,7 @@ impl ClusterConnection {
             return SyncTermSideEffect::Downgrade;
         }
 
-        return SyncTermSideEffect::None;
+        SyncTermSideEffect::None
     }
 
     pub fn increment_term(&mut self) {

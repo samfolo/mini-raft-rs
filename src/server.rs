@@ -9,6 +9,7 @@ use tokio::{
     time,
 };
 
+use crate::cluster_node::error::ClusterNodeError;
 use crate::{cluster_node, naive_logging, timeout};
 
 /// At any given time each server is in one of three states:
@@ -81,7 +82,7 @@ impl Server {
     /// immediately reverts to follower mode.
     fn downgrade_to_follower(&self) -> Result<(), watch::error::SendError<ServerMode>> {
         if *self.mode.borrow() != ServerMode::Follower {
-            naive_logging::log(self.id, &format!("downgrading to follower..."));
+            naive_logging::log(self.id, "downgrading to follower...");
             return self.mode_tx.send(ServerMode::Follower);
         }
 
@@ -92,7 +93,7 @@ impl Server {
     /// transitions to candidate mode
     fn upgrade_to_candidate(&self) -> Result<(), watch::error::SendError<ServerMode>> {
         if *self.mode.borrow() != ServerMode::Candidate {
-            naive_logging::log(self.id, &format!("upgrading to candidate..."));
+            naive_logging::log(self.id, "upgrading to candidate...");
             return self.mode_tx.send(ServerMode::Candidate);
         }
 
@@ -104,7 +105,7 @@ impl Server {
     /// candidate wins an election, it becomes leader.
     fn upgrade_to_leader(&self) -> Result<(), watch::error::SendError<ServerMode>> {
         if *self.mode.borrow() != ServerMode::Leader {
-            naive_logging::log(self.id, &format!("upgrading to leader..."));
+            naive_logging::log(self.id, "upgrading to leader...");
             return self.mode_tx.send(ServerMode::Leader);
         }
 
@@ -149,10 +150,7 @@ impl Server {
                             let conn = self.cluster_conn.lock().await;
                             conn.append_entries(vec![])
                         } {
-                            return Err(cluster_node::ClusterNodeError::HeartbeatError(
-                                id,
-                                err.into(),
-                            ))
+                            return Err(ClusterNodeError::Heartbeat(id, err))
                         }
                     }
 
@@ -160,9 +158,7 @@ impl Server {
                 },
                 res = mode.changed() => {
                     if let Err(err) = res {
-                        return Err(cluster_node::ClusterNodeError::UnexpectedError(
-                            err.into(),
-                        ));
+                        return Err(ClusterNodeError::Unexpected(err.into()));
                     }
 
                     if *mode.borrow() == ServerMode::Leader {
@@ -201,10 +197,7 @@ impl Server {
                                 match res.body() {
                                     rpc::ResponseBody::RequestVote { vote_granted } => {
                                         if *vote_granted {
-                                            naive_logging::log(
-                                                id,
-                                                &format!("received vote for this term"),
-                                            );
+                                            naive_logging::log(id, "received vote for this term");
                                             total_votes_over_term += 1;
                                             if total_votes_over_term * 2
                                                 > current_cluster_node_count
@@ -217,54 +210,38 @@ impl Server {
                                                 );
 
                                                 if let Err(err) = self.upgrade_to_leader() {
-                                                    return Err(cluster_node::ClusterNodeError::UnexpectedError(
+                                                    return Err(ClusterNodeError::Unexpected(
                                                         err.into(),
                                                     ));
                                                 }
 
                                                 return Ok(());
                                             }
-                                        } else {
-                                            if let Err(err) = self.sync_term(res.term()).await {
-                                                return Err(
-                                                    cluster_node::ClusterNodeError::UnexpectedError(
-                                                        err.into(),
-                                                    ),
-                                                );
-                                            }
+                                        } else if let Err(err) = self.sync_term(res.term()).await {
+                                            return Err(ClusterNodeError::Unexpected(err.into()));
                                         }
                                     }
                                     rpc::ResponseBody::AppendEntries { .. } => {
-                                        return Err(
-                                            cluster_node::ClusterNodeError::UnexpectedError(
-                                                anyhow::anyhow!(
-                                                    "invalid response [AppendEntries] to RequestVote RPC"
-                                                ),
-                                            ),
-                                        );
+                                        return Err(ClusterNodeError::Unexpected(anyhow::anyhow!(
+                                            "invalid response [AppendEntries] to RequestVote RPC"
+                                        )));
                                     }
                                 }
                             }
 
                             naive_logging::log(
                                 id,
-                                &format!("election ended before enough votes were received."),
+                                "election ended before enough votes were received.",
                             );
-                            naive_logging::log(id, &format!("restarting election..."));
+                            naive_logging::log(id, "restarting election...");
                         }
                         Err(err) => {
-                            return Err(
-                                cluster_node::ClusterNodeError::OutgoingClusterConnectionError(
-                                    id, err,
-                                ),
-                            );
+                            return Err(ClusterNodeError::OutgoingClusterConnection(id, err));
                         }
                     }
                 }
-            } else {
-                if let Err(err) = mode.changed().await {
-                    return Err(cluster_node::ClusterNodeError::UnexpectedError(err.into()));
-                }
+            } else if let Err(err) = mode.changed().await {
+                return Err(ClusterNodeError::Unexpected(err.into()));
             }
         }
     }
@@ -293,9 +270,7 @@ impl Server {
                         self.vote(Some(id));
 
                         if let Err(err) = self.upgrade_to_candidate() {
-                            return Err(cluster_node::ClusterNodeError::UnexpectedError(
-                                err.into(),
-                            ));
+                            return Err(ClusterNodeError::Unexpected(err.into()));
                         }
                     }
                 },
@@ -316,9 +291,9 @@ impl Server {
                                         let previously_voted_for_leader = {
                                             match self.voted_for.read() {
                                                 Ok(vote) => vote.is_some_and(|id| id == *leader_id),
-                                                Err(err) => return Err(cluster_node::ClusterNodeError::UnexpectedError(
-                                                    anyhow::anyhow!("failed to read current vote: {:?}", err)
-                                                ))
+                                                Err(err) => return Err(ClusterNodeError::Unexpected(anyhow::anyhow!(
+                                                    "failed to read current vote: {:?}", err
+                                                )))
                                             }
                                         };
 
@@ -339,16 +314,12 @@ impl Server {
                                                 current_term,
                                                 rpc::ResponseBody::AppendEntries { },
                                             ).await {
-                                                return Err(cluster_node::ClusterNodeError::UnexpectedError(
-                                                    err.into(),
-                                                ));
+                                                return Err(ClusterNodeError::Unexpected(err.into()));
                                             }
                                         }
 
                                         if let Err(err) =self.sync_term(request.term()).await {
-                                            return Err(cluster_node::ClusterNodeError::UnexpectedError(
-                                                err.into(),
-                                            ));
+                                            return Err(ClusterNodeError::Unexpected(err.into()));
                                         }
                                     }
                                 }
@@ -391,19 +362,14 @@ impl Server {
                                         }
 
                                         if let Err(err) =self.sync_term(request.term()).await {
-                                            return Err(cluster_node::ClusterNodeError::UnexpectedError(
-                                                err.into(),
-                                            ));
+                                            return Err(ClusterNodeError::Unexpected(err.into()));
                                         }
                                     }
                                 }
                             }
                         },
                         // Tracing would be nice here..
-                        Err(err) => return Err(cluster_node::ClusterNodeError::IncomingClusterConnectionError(
-                            id,
-                            err.clone(),
-                        ))
+                        Err(err) => return Err(ClusterNodeError::IncomingClusterConnection(id, err))
                     }
                 }
             }
@@ -412,7 +378,7 @@ impl Server {
 }
 
 impl cluster_node::ClusterNode for Server {
-    async fn run(&self) -> Result<uuid::Uuid, cluster_node::ClusterNodeError> {
+    async fn run(&self) -> Result<uuid::Uuid, ClusterNodeError> {
         naive_logging::log(self.id, "running...");
 
         match tokio::try_join!(
