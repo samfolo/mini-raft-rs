@@ -1,14 +1,16 @@
 use tokio::sync::mpsc;
 
+use crate::domain;
+
 /// RequestBody represents the body of a ServerRequest.
 #[derive(Clone, Debug)]
 pub enum RequestBody {
     AppendEntries {
-        leader_id: uuid::Uuid,
+        leader_id: domain::node_id::NodeId,
         entries: Vec<String>, // try and remove owned string later.
     },
     RequestVote {
-        candidate_id: uuid::Uuid,
+        candidate_id: domain::node_id::NodeId,
     },
 }
 

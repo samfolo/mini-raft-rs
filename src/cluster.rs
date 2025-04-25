@@ -1,3 +1,5 @@
+use std::time;
+
 use tokio::sync::{broadcast, watch};
 
 use crate::{cluster_node, server, timeout};
@@ -11,6 +13,7 @@ pub struct Cluster {
     nodes: Vec<cluster_node::ClusterNodeHandle>,
     publisher: Publisher,
     node_count: u64,
+    heartbeat_interval: u64,
     min_election_timeout_ms: u64,
     max_election_timeout_ms: u64,
 }
@@ -18,8 +21,9 @@ pub struct Cluster {
 impl Cluster {
     const DEFAULT_NODE_COUNT: u64 = 5;
     const DEFAULT_MESSAGE_BUFFER_SIZE: usize = 32;
-    const DEFAULT_MIN_ELECTION_TIMEOUT_MS: u64 = 300;
-    const DEFAULT_MAX_ELECTION_TIMEOUT_MS: u64 = 500;
+    const DEFAULT_HEARTBEAT_INTERVAL_MS: u64 = 50;
+    const DEFAULT_MIN_ELECTION_TIMEOUT_MS: u64 = 150;
+    const DEFAULT_MAX_ELECTION_TIMEOUT_MS: u64 = 300;
 
     pub fn new(buffer_size: usize) -> Self {
         let (publisher, _subscriber) = broadcast::channel(buffer_size);
@@ -40,6 +44,11 @@ impl Cluster {
         assert!(min < max);
         self.min_election_timeout_ms = min;
         self.max_election_timeout_ms = max;
+        self
+    }
+
+    pub fn with_heartbeat_interval(mut self, interval_ms: u64) -> Self {
+        self.heartbeat_interval = interval_ms;
         self
     }
 
@@ -64,6 +73,7 @@ impl Cluster {
             self.register_node(Box::new(move |tx, _rx| {
                 server::Server::new(
                     tx,
+                    time::Duration::from_millis(self.heartbeat_interval),
                     timeout::TimeoutRange::new(
                         self.min_election_timeout_ms,
                         self.max_election_timeout_ms,
@@ -98,6 +108,7 @@ impl Default for Cluster {
             nodes: Default::default(),
             publisher,
             node_count: Self::DEFAULT_NODE_COUNT,
+            heartbeat_interval: Self::DEFAULT_HEARTBEAT_INTERVAL_MS,
             min_election_timeout_ms: Self::DEFAULT_MIN_ELECTION_TIMEOUT_MS,
             max_election_timeout_ms: Self::DEFAULT_MAX_ELECTION_TIMEOUT_MS,
         }
@@ -108,23 +119,25 @@ impl Default for Cluster {
 mod tests {
     use std::collections::HashSet;
 
+    use crate::domain;
+
     use super::*;
 
     #[allow(unused)]
     struct MockServer {
-        id: uuid::Uuid,
+        id: domain::node_id::NodeId,
         tx: Publisher,
         rx: Subscriber,
     }
 
     impl MockServer {
-        fn new(id: uuid::Uuid, tx: Publisher, rx: Subscriber) -> Self {
+        fn new(id: domain::node_id::NodeId, tx: Publisher, rx: Subscriber) -> Self {
             Self { id, tx, rx }
         }
     }
 
     impl cluster_node::ClusterNode for MockServer {
-        async fn run(&self) -> cluster_node::Result<uuid::Uuid> {
+        async fn run(&self) -> cluster_node::Result<domain::node_id::NodeId> {
             Ok(self.id)
         }
     }
@@ -133,8 +146,8 @@ mod tests {
     async fn can_register_multiple_nodes() -> anyhow::Result<()> {
         let mut test_cluster = Cluster::default();
 
-        let server_one_id = uuid::Uuid::new_v4();
-        let server_two_id = uuid::Uuid::new_v4();
+        let server_one_id = domain::node_id::NodeId::new();
+        let server_two_id = domain::node_id::NodeId::new();
 
         test_cluster
             .register_node(Box::new(move |tx, rx| {

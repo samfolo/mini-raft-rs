@@ -2,17 +2,20 @@ use std::fmt;
 
 use tokio::{sync::broadcast, time};
 
-use crate::{errors, server::rpc};
+use crate::{domain, errors, server::rpc};
 
 #[derive(thiserror::Error)]
 pub enum ClusterNodeError {
     #[error("Failed to send heartbeat to cluster")]
-    Heartbeat(uuid::Uuid, #[source] anyhow::Error),
+    Heartbeat(domain::node_id::NodeId, #[source] anyhow::Error),
     #[error("Lost connection to cluster")]
-    IncomingClusterConnection(uuid::Uuid, #[source] broadcast::error::RecvError),
+    IncomingClusterConnection(
+        domain::node_id::NodeId,
+        #[source] broadcast::error::RecvError,
+    ),
     #[error("Lost connection to cluster")]
     OutgoingClusterConnection(
-        uuid::Uuid,
+        domain::node_id::NodeId,
         #[source] broadcast::error::SendError<rpc::ServerRequest>,
     ),
     #[error("Timed out waitng for response")]

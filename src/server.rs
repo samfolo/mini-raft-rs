@@ -10,7 +10,7 @@ use tokio::{
 };
 
 use crate::cluster_node::error::ClusterNodeError;
-use crate::{cluster_node, naive_logging, timeout};
+use crate::{cluster_node, domain, naive_logging, timeout};
 
 /// At any given time each server is in one of three states:
 /// leader, follower, or candidate.
@@ -24,13 +24,14 @@ pub enum ServerMode {
 /// A Server handles requests from Clients. Within the same Cluster,
 /// Only one server can be the Leader at any one time.
 pub struct Server {
-    id: uuid::Uuid,
+    id: domain::node_id::NodeId,
     mode: watch::Receiver<ServerMode>,
     mode_tx: watch::Sender<ServerMode>,
     publisher: broadcast::Sender<rpc::ServerRequest>,
     cluster_conn: Arc<Mutex<cluster_connection::ClusterConnection>>,
-    timeout_range: timeout::TimeoutRange,
-    voted_for: RwLock<Option<uuid::Uuid>>,
+    heartbeat_interval: time::Duration,
+    election_timeout_range: timeout::TimeoutRange,
+    voted_for: RwLock<Option<domain::node_id::NodeId>>,
 }
 
 /// Raft servers communicate using remote procedure calls (RPCs), and the basic
@@ -40,10 +41,11 @@ pub struct Server {
 impl Server {
     pub fn new(
         publisher: broadcast::Sender<rpc::ServerRequest>,
-        timeout_range: timeout::TimeoutRange,
+        heartbeat_interval: time::Duration,
+        election_timeout_range: timeout::TimeoutRange,
         cluster_node_count: watch::Receiver<u64>,
     ) -> Self {
-        let id = uuid::Uuid::new_v4();
+        let id = domain::node_id::NodeId::new();
         naive_logging::log(id, "initialised.");
 
         let (mode_tx, mode) = watch::channel(ServerMode::Follower);
@@ -58,7 +60,8 @@ impl Server {
             mode_tx,
             publisher,
             cluster_conn,
-            timeout_range,
+            heartbeat_interval,
+            election_timeout_range,
             voted_for: RwLock::new(None),
         }
     }
@@ -112,14 +115,14 @@ impl Server {
         Ok(())
     }
 
-    fn voted_for(&self) -> Option<uuid::Uuid> {
+    fn voted_for(&self) -> Option<domain::node_id::NodeId> {
         match self.voted_for.read() {
             Ok(res) => *res,
             Err(err) => panic!("failed to read voted_for: {err:?}"),
         }
     }
 
-    fn vote(&self, candidate_id: Option<uuid::Uuid>) {
+    fn vote(&self, candidate_id: Option<domain::node_id::NodeId>) {
         match self.voted_for.write() {
             Ok(mut res) => {
                 *res = candidate_id;
@@ -138,15 +141,14 @@ impl Server {
     async fn run_heartbeat_routine(&self) -> cluster_node::Result<()> {
         let id = self.id;
         let mut mode = self.mode_tx.subscribe();
-        let timeout_range = self.timeout_range.clone();
 
-        let timeout = time::sleep(timeout_range.random());
+        let timeout = time::sleep(self.heartbeat_interval);
         tokio::pin!(timeout);
 
         let reset_timeout = |timeout: &mut pin::Pin<&mut time::Sleep>| {
             timeout
                 .as_mut()
-                .reset(time::Instant::now() + timeout_range.random())
+                .reset(time::Instant::now() + self.heartbeat_interval)
         };
 
         loop {
@@ -191,7 +193,7 @@ impl Server {
 
                     match request_vote_result {
                         Ok(mut response) => {
-                            let timeout = self.timeout_range.random();
+                            let timeout = self.election_timeout_range.random();
                             let (current_term, current_cluster_node_count) = {
                                 let conn = self.cluster_conn.lock().await;
                                 (conn.current_term(), conn.cluster_node_count())
@@ -258,19 +260,19 @@ impl Server {
         let mode = self.mode_tx.subscribe();
         let mut subscriber = self.publisher.subscribe();
 
-        let timeout = time::sleep(self.timeout_range.random());
+        let timeout = time::sleep(self.election_timeout_range.random());
         tokio::pin!(timeout);
 
         let reset_timeout = |timeout: &mut pin::Pin<&mut time::Sleep>| {
             timeout
                 .as_mut()
-                .reset(time::Instant::now() + self.timeout_range.random())
+                .reset(time::Instant::now() + self.election_timeout_range.random())
         };
 
         loop {
             tokio::select! {
                 _ = &mut timeout => {
-                    if *mode.borrow() == ServerMode::Follower && self.voted_for().is_none() {
+                    if *mode.borrow() == ServerMode::Follower {
                         naive_logging::log(id, "timed out waiting for a response...");
                         naive_logging::log(id, "starting election...");
 
@@ -382,7 +384,7 @@ impl Server {
 }
 
 impl cluster_node::ClusterNode for Server {
-    async fn run(&self) -> Result<uuid::Uuid, ClusterNodeError> {
+    async fn run(&self) -> Result<domain::node_id::NodeId, ClusterNodeError> {
         naive_logging::log(self.id, "running...");
 
         match tokio::try_join!(
@@ -421,6 +423,7 @@ mod tests {
 
         let _ = Server::new(
             publisher,
+            time::Duration::from_millis(5),
             timeout::TimeoutRange::new(10, 20),
             cluster_node_count,
         );

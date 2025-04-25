@@ -1,6 +1,6 @@
 use tokio::sync::{broadcast, mpsc, watch};
 
-use crate::{naive_logging, server::rpc};
+use crate::{domain, naive_logging, server::rpc};
 
 #[derive(Debug, PartialEq)]
 pub enum SyncTermSideEffect {
@@ -10,7 +10,7 @@ pub enum SyncTermSideEffect {
 
 #[derive(Debug)]
 pub struct ClusterConnection {
-    node_id: uuid::Uuid,
+    node_id: domain::node_id::NodeId,
     /// Latest term Server has seen. Iinitialised to 0 on first boot,
     /// increases monotonically.
     current_term: usize,
@@ -22,7 +22,7 @@ impl ClusterConnection {
     const MESSAGE_BUFFER_SIZE: usize = 32;
 
     pub fn new(
-        node_id: uuid::Uuid,
+        node_id: domain::node_id::NodeId,
         tx: broadcast::Sender<rpc::ServerRequest>,
         cluster_node_count: watch::Receiver<u64>,
     ) -> Self {
