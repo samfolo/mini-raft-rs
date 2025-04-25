@@ -1,14 +1,11 @@
 mod cluster_connection;
 pub mod rpc;
 
-use std::error::Error;
 use std::pin;
 use std::sync::{Arc, RwLock};
-use tokio::sync::{Mutex, mpsc, oneshot};
-use tokio::time::Sleep;
+use tokio::sync::Mutex;
 use tokio::{
     sync::{broadcast, watch},
-    task::JoinHandle,
     time,
 };
 
@@ -30,7 +27,6 @@ pub struct Server {
     mode: watch::Receiver<ServerMode>,
     mode_tx: watch::Sender<ServerMode>,
     publisher: broadcast::Sender<rpc::ServerRequest>,
-    subscriber: broadcast::Receiver<rpc::ServerRequest>,
     cluster_conn: Arc<Mutex<cluster_connection::ClusterConnection>>,
     timeout_range: timeout::TimeoutRange,
     voted_for: RwLock<Option<uuid::Uuid>>,
@@ -43,7 +39,6 @@ pub struct Server {
 impl Server {
     pub fn new(
         publisher: broadcast::Sender<rpc::ServerRequest>,
-        subscriber: broadcast::Receiver<rpc::ServerRequest>,
         timeout_range: timeout::TimeoutRange,
         cluster_node_count: watch::Receiver<u64>,
     ) -> Self {
@@ -52,12 +47,8 @@ impl Server {
 
         let (mode_tx, mode) = watch::channel(ServerMode::Follower);
 
-        let cluster_conn = cluster_connection::ClusterConnection::new(
-            id,
-            publisher.clone(),
-            publisher.subscribe(),
-            cluster_node_count,
-        );
+        let cluster_conn =
+            cluster_connection::ClusterConnection::new(id, publisher.clone(), cluster_node_count);
         let cluster_conn = Arc::new(Mutex::new(cluster_conn));
 
         Self {
@@ -65,7 +56,6 @@ impl Server {
             mode,
             mode_tx,
             publisher,
-            subscriber,
             cluster_conn,
             timeout_range,
             voted_for: RwLock::new(None),
@@ -77,13 +67,9 @@ impl Server {
     /// its current term to the larger value.
     async fn sync_term(
         &self,
-        request: &rpc::ServerRequest,
+        other_server_term: usize,
     ) -> Result<(), watch::error::SendError<ServerMode>> {
-        let effect = {
-            println!("locked in sync_term");
-            self.cluster_conn.lock().await.sync_term(request.term())
-        };
-        println!("I GET HURR");
+        let effect = { self.cluster_conn.lock().await.sync_term(other_server_term) };
         if let cluster_connection::SyncTermSideEffect::Downgrade = effect {
             return self.downgrade_to_follower();
         }
@@ -238,6 +224,14 @@ impl Server {
 
                                                 return Ok(());
                                             }
+                                        } else {
+                                            if let Err(err) = self.sync_term(res.term()).await {
+                                                return Err(
+                                                    cluster_node::ClusterNodeError::UnexpectedError(
+                                                        err.into(),
+                                                    ),
+                                                );
+                                            }
                                         }
                                     }
                                     rpc::ResponseBody::AppendEntries { .. } => {
@@ -323,7 +317,7 @@ impl Server {
                                             match self.voted_for.read() {
                                                 Ok(vote) => vote.is_some_and(|id| id == *leader_id),
                                                 Err(err) => return Err(cluster_node::ClusterNodeError::UnexpectedError(
-                                                    anyhow::anyhow!("could not read current vote: {:?}", err)
+                                                    anyhow::anyhow!("failed to read current vote: {:?}", err)
                                                 ))
                                             }
                                         };
@@ -338,13 +332,12 @@ impl Server {
                                                 naive_logging::log(self.id, &format!("acknowledging new leader {leader_id}"));
                                                 self.vote(Some(*leader_id));
                                             }
-
                                         }
 
                                         if request.can_respond() {
                                             if let Err(err) = request.respond(
                                                 current_term,
-                                                rpc::ResponseBody::AppendEntries { success: !is_stale_request },
+                                                rpc::ResponseBody::AppendEntries { },
                                             ).await {
                                                 return Err(cluster_node::ClusterNodeError::UnexpectedError(
                                                     err.into(),
@@ -352,18 +345,11 @@ impl Server {
                                             }
                                         }
 
-                                        let effect = {
-                                            let mut conn = self.cluster_conn.lock().await;
-                                            conn.sync_term(request.term())
-                                        };
-
-                                        if let cluster_connection::SyncTermSideEffect::Downgrade = effect {
-                                            if let Err(err) = self.downgrade_to_follower() {
-                                                return Err(cluster_node::ClusterNodeError::UnexpectedError(
-                                                    err.into(),
-                                                ));
-                                            }
-                                        };
+                                        if let Err(err) =self.sync_term(request.term()).await {
+                                            return Err(cluster_node::ClusterNodeError::UnexpectedError(
+                                                err.into(),
+                                            ));
+                                        }
                                     }
                                 }
                                 rpc::RequestBody::RequestVote { candidate_id, .. } => {
@@ -376,7 +362,14 @@ impl Server {
                                             conn.current_term()
                                         };
 
-                                        let should_grant_vote = request.term() >= current_term;
+                                        let is_currently_leader = *mode.borrow() == ServerMode::Leader;
+
+                                        let should_grant_vote = if is_currently_leader {
+                                            naive_logging::log(self.id, &format!("leader? {}, req? {} <=> ", current_term, request.term()));
+                                            request.term() > current_term
+                                        } else {
+                                            request.term() >= current_term
+                                        };
 
                                         if should_grant_vote {
                                             reset_timeout(&mut timeout);
@@ -392,23 +385,16 @@ impl Server {
                                                 current_term,
                                                 rpc::ResponseBody::RequestVote { vote_granted: should_grant_vote },
                                             ).await {
-                                                naive_logging::log(self.id, &format!("could not respond to {candidate_id}: {err}"));
+                                                naive_logging::log(self.id, &format!("failed to respond to {candidate_id}: {err}"));
                                                 continue;
                                             }
                                         }
 
-                                        let effect = {
-                                            let mut conn = self.cluster_conn.lock().await;
-                                            conn.sync_term(request.term())
-                                        };
-
-                                        if let cluster_connection::SyncTermSideEffect::Downgrade = effect {
-                                            if let Err(err) = self.downgrade_to_follower() {
-                                                return Err(cluster_node::ClusterNodeError::UnexpectedError(
-                                                    err.into(),
-                                                ));
-                                            }
-                                        };
+                                        if let Err(err) =self.sync_term(request.term()).await {
+                                            return Err(cluster_node::ClusterNodeError::UnexpectedError(
+                                                err.into(),
+                                            ));
+                                        }
                                     }
                                 }
                             }
@@ -460,12 +446,11 @@ mod tests {
 
     #[test]
     fn starts() -> anyhow::Result<()> {
-        let (publisher, subscriber) = broadcast::channel(TEST_CANNEL_CAPACITY);
+        let (publisher, _subscriber) = broadcast::channel(TEST_CANNEL_CAPACITY);
         let (_, cluster_node_count) = watch::channel(1);
 
         let _ = Server::new(
             publisher,
-            subscriber,
             timeout::TimeoutRange::new(10, 20),
             cluster_node_count,
         );

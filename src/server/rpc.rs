@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 pub enum RequestBody {
     AppendEntries {
         leader_id: uuid::Uuid,
-        entries: Vec<String>, // try and remove owned string later.
+        _entries: Vec<String>, // try and remove owned string later.
     },
     RequestVote {
         candidate_id: uuid::Uuid,
@@ -53,7 +53,7 @@ impl ServerRequest {
 /// ResponseBody represents the body of a ServerResponse
 #[derive(Clone, Debug)]
 pub enum ResponseBody {
-    AppendEntries { success: bool },
+    AppendEntries {},
     RequestVote { vote_granted: bool },
 }
 

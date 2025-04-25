@@ -1,7 +1,4 @@
-use tokio::{
-    sync::{broadcast, mpsc, watch},
-    time,
-};
+use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::{naive_logging, server::rpc};
 
@@ -18,7 +15,6 @@ pub struct ClusterConnection {
     /// increases monotonically.
     current_term: usize,
     tx: broadcast::Sender<rpc::ServerRequest>,
-    rx: broadcast::Receiver<rpc::ServerRequest>,
     cluster_node_count: watch::Receiver<u64>,
 }
 
@@ -28,14 +24,12 @@ impl ClusterConnection {
     pub fn new(
         node_id: uuid::Uuid,
         tx: broadcast::Sender<rpc::ServerRequest>,
-        rx: broadcast::Receiver<rpc::ServerRequest>,
         cluster_node_count: watch::Receiver<u64>,
     ) -> Self {
         Self {
             node_id,
             current_term: 0,
             tx,
-            rx,
             cluster_node_count,
         }
     }
@@ -86,15 +80,11 @@ impl ClusterConnection {
             responder,
             rpc::RequestBody::AppendEntries {
                 leader_id: self.node_id,
-                entries,
+                _entries: entries,
             },
         ))?;
 
         Ok(receiver)
-    }
-
-    pub fn node_id(&self) -> uuid::Uuid {
-        self.node_id
     }
 
     pub fn current_term(&self) -> usize {
@@ -116,9 +106,5 @@ impl ClusterConnection {
 
     pub fn cluster_node_count(&self) -> u64 {
         *self.cluster_node_count.borrow()
-    }
-
-    pub async fn recv(&mut self) -> Result<rpc::ServerRequest, broadcast::error::RecvError> {
-        self.rx.recv().await
     }
 }

@@ -10,7 +10,6 @@ type NodeInit<N> = Box<dyn FnOnce(Publisher, Subscriber) -> N>;
 pub struct Cluster {
     nodes: Vec<cluster_node::ClusterNodeHandle>,
     publisher: Publisher,
-    subscriber: Subscriber,
     node_count: u64,
     min_election_timeout_ms: u64,
     max_election_timeout_ms: u64,
@@ -23,11 +22,10 @@ impl Cluster {
     const DEFAULT_MAX_ELECTION_TIMEOUT_MS: u64 = 500;
 
     pub fn new(buffer_size: usize) -> Self {
-        let (publisher, subscriber) = broadcast::channel(buffer_size);
+        let (publisher, _subscriber) = broadcast::channel(buffer_size);
 
         Self {
             publisher,
-            subscriber,
             ..Default::default()
         }
     }
@@ -63,10 +61,9 @@ impl Cluster {
         for _ in 0..self.node_count {
             let cluster_node_count = cluster_node_count_tx.subscribe();
 
-            self.register_node(Box::new(move |tx, rx| {
+            self.register_node(Box::new(move |tx, _rx| {
                 server::Server::new(
                     tx,
-                    rx,
                     timeout::TimeoutRange::new(
                         self.min_election_timeout_ms,
                         self.max_election_timeout_ms,
@@ -96,11 +93,10 @@ impl Cluster {
 
 impl Default for Cluster {
     fn default() -> Self {
-        let (publisher, subscriber) = broadcast::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
+        let (publisher, _subscriber) = broadcast::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
         Self {
             nodes: Default::default(),
             publisher,
-            subscriber,
             node_count: Self::DEFAULT_NODE_COUNT,
             min_election_timeout_ms: Self::DEFAULT_MIN_ELECTION_TIMEOUT_MS,
             max_election_timeout_ms: Self::DEFAULT_MAX_ELECTION_TIMEOUT_MS,
@@ -114,6 +110,7 @@ mod tests {
 
     use super::*;
 
+    #[allow(unused)]
     struct MockServer {
         id: uuid::Uuid,
         tx: Publisher,

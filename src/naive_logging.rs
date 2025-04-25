@@ -1,3 +1,6 @@
+use chrono::Utc;
+
 pub fn log(id: uuid::Uuid, message: &str) {
-    println!("[{}]: {}", id, message);
+    let time = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    println!("[{time}] [{}]: {}", id, message);
 }
