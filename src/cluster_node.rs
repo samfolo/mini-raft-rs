@@ -1,9 +1,11 @@
-use tokio::{sync::broadcast, task};
+pub mod error;
 
-pub type Result<T> = anyhow::Result<T, broadcast::error::RecvError>;
+use tokio::task;
+
+pub type Result<T> = anyhow::Result<T, error::ClusterNodeError>;
 
 pub type ClusterNodeHandle = task::JoinHandle<Result<uuid::Uuid>>;
 
 pub trait ClusterNode: Send + 'static {
-    fn run(&mut self) -> impl Future<Output = Result<uuid::Uuid>> + Send;
+    fn run(&self) -> impl Future<Output = Result<uuid::Uuid>> + Send;
 }

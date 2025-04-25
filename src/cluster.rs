@@ -1,52 +1,105 @@
-#![allow(dead_code)] // TODO: remove next branch
+use tokio::sync::{broadcast, watch};
 
-use std::sync::{Arc, Mutex};
+use crate::{cluster_node, server, timeout};
 
-use tokio::sync::broadcast;
-
-use crate::{cluster_node, server};
-
-type Publisher = Arc<Mutex<broadcast::Sender<server::rpc::ServerRequest>>>;
-type Subscriber = Arc<Mutex<broadcast::Receiver<server::rpc::ServerRequest>>>;
+type Publisher = broadcast::Sender<server::rpc::ServerRequest>;
+type Subscriber = broadcast::Receiver<server::rpc::ServerRequest>;
 type NodeInit<N> = Box<dyn FnOnce(Publisher, Subscriber) -> N>;
 
 /// A Raft cluster contains several servers
 pub struct Cluster {
     nodes: Vec<cluster_node::ClusterNodeHandle>,
     publisher: Publisher,
-    subscriber: Subscriber,
+    node_count: u64,
+    min_election_timeout_ms: u64,
+    max_election_timeout_ms: u64,
 }
 
 impl Cluster {
+    const DEFAULT_NODE_COUNT: u64 = 5;
     const DEFAULT_MESSAGE_BUFFER_SIZE: usize = 32;
+    const DEFAULT_MIN_ELECTION_TIMEOUT_MS: u64 = 300;
+    const DEFAULT_MAX_ELECTION_TIMEOUT_MS: u64 = 500;
 
     pub fn new(buffer_size: usize) -> Self {
-        let (publisher, subscriber) = broadcast::channel(buffer_size);
+        let (publisher, _subscriber) = broadcast::channel(buffer_size);
+
         Self {
-            nodes: Default::default(),
-            publisher: Arc::new(Mutex::new(publisher)),
-            subscriber: Arc::new(Mutex::new(subscriber)),
+            publisher,
+            ..Default::default()
         }
     }
 
-    pub async fn register_node<N: cluster_node::ClusterNode>(
+    pub fn with_node_count(mut self, node_count: u64) -> Self {
+        assert!(node_count > 0);
+        self.node_count = node_count;
+        self
+    }
+
+    pub fn with_election_timeout_range(mut self, min: u64, max: u64) -> Self {
+        assert!(min < max);
+        self.min_election_timeout_ms = min;
+        self.max_election_timeout_ms = max;
+        self
+    }
+
+    async fn register_node<N: cluster_node::ClusterNode + Sync>(
         &mut self,
         node_init: NodeInit<N>,
     ) -> &mut Self {
-        let mut node = node_init(Arc::clone(&self.publisher), Arc::clone(&self.subscriber));
+        let publisher = self.publisher.clone();
+        let subscriber = publisher.subscribe();
+        let node = node_init(publisher, subscriber);
         let handle = tokio::spawn(async move { node.run().await });
         self.nodes.push(handle);
         self
+    }
+
+    pub async fn run(mut self) {
+        let (cluster_node_count_tx, _) = watch::channel::<u64>(self.node_count);
+
+        for _ in 0..self.node_count {
+            let cluster_node_count = cluster_node_count_tx.subscribe();
+
+            self.register_node(Box::new(move |tx, _rx| {
+                server::Server::new(
+                    tx,
+                    timeout::TimeoutRange::new(
+                        self.min_election_timeout_ms,
+                        self.max_election_timeout_ms,
+                    ),
+                    cluster_node_count,
+                )
+            }))
+            .await;
+        }
+
+        match tokio::signal::ctrl_c().await {
+            Ok(_) => self.shutdown().await,
+            Err(err) => panic!("{err:?}"),
+        }
+    }
+
+    async fn shutdown(self) {
+        for node in &self.nodes {
+            node.abort();
+        }
+
+        for node in self.nodes {
+            assert!(node.await.unwrap_err().is_cancelled());
+        }
     }
 }
 
 impl Default for Cluster {
     fn default() -> Self {
-        let (publisher, subscriber) = broadcast::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
+        let (publisher, _subscriber) = broadcast::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
         Self {
             nodes: Default::default(),
-            publisher: Arc::new(Mutex::new(publisher)),
-            subscriber: Arc::new(Mutex::new(subscriber)),
+            publisher,
+            node_count: Self::DEFAULT_NODE_COUNT,
+            min_election_timeout_ms: Self::DEFAULT_MIN_ELECTION_TIMEOUT_MS,
+            max_election_timeout_ms: Self::DEFAULT_MAX_ELECTION_TIMEOUT_MS,
         }
     }
 }
@@ -57,6 +110,7 @@ mod tests {
 
     use super::*;
 
+    #[allow(unused)]
     struct MockServer {
         id: uuid::Uuid,
         tx: Publisher,
@@ -70,14 +124,14 @@ mod tests {
     }
 
     impl cluster_node::ClusterNode for MockServer {
-        async fn run(&mut self) -> cluster_node::Result<uuid::Uuid> {
+        async fn run(&self) -> cluster_node::Result<uuid::Uuid> {
             Ok(self.id)
         }
     }
 
     #[tokio::test]
     async fn can_register_multiple_nodes() -> anyhow::Result<()> {
-        let mut test_cluster = Cluster::new(Cluster::DEFAULT_MESSAGE_BUFFER_SIZE);
+        let mut test_cluster = Cluster::default();
 
         let server_one_id = uuid::Uuid::new_v4();
         let server_two_id = uuid::Uuid::new_v4();

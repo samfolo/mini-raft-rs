@@ -1,40 +1,75 @@
 use tokio::sync::mpsc;
 
-/// RequestPayload represents the payload of a ServerRequest, should it need one.
+/// RequestBody represents the body of a ServerRequest.
 #[derive(Clone, Debug)]
-pub enum RequestPayload {
-    AppendEntries {},
-    RequestVote {},
+pub enum RequestBody {
+    AppendEntries {
+        leader_id: uuid::Uuid,
+        _entries: Vec<String>, // try and remove owned string later.
+    },
+    RequestVote {
+        candidate_id: uuid::Uuid,
+    },
 }
 
 /// ServerRequest represents a request sent by a Server.
 #[derive(Clone, Debug)]
 pub struct ServerRequest {
-    #[allow(unused)]
     term: usize,
-    #[allow(unused)]
     responder: mpsc::Sender<ServerResponse>,
-    payload: Option<RequestPayload>,
+    body: RequestBody,
 }
 
 impl ServerRequest {
-    pub fn new(term: usize, responder: mpsc::Sender<ServerResponse>) -> Self {
+    pub fn new(term: usize, responder: mpsc::Sender<ServerResponse>, body: RequestBody) -> Self {
         Self {
             term,
             responder,
-            payload: None,
+            body,
         }
     }
 
-    pub fn with_payload(&mut self, payload: RequestPayload) -> Self {
-        self.payload = Some(payload);
-        self.to_owned()
+    pub fn term(&self) -> usize {
+        self.term
     }
+
+    pub fn body(&self) -> &RequestBody {
+        &self.body
+    }
+
+    pub fn can_respond(&self) -> bool {
+        !self.responder.is_closed()
+    }
+
+    pub async fn respond(
+        &self,
+        term: usize,
+        body: ResponseBody,
+    ) -> Result<(), mpsc::error::SendError<ServerResponse>> {
+        self.responder.send(ServerResponse { term, body }).await
+    }
+}
+
+/// ResponseBody represents the body of a ServerResponse
+#[derive(Clone, Debug)]
+pub enum ResponseBody {
+    AppendEntries {},
+    RequestVote { vote_granted: bool },
 }
 
 /// ServerResponse represents a response received from a Server.
 #[derive(Clone, Debug)]
 pub struct ServerResponse {
-    #[allow(unused)]
     term: usize,
+    body: ResponseBody,
+}
+
+impl ServerResponse {
+    pub fn term(&self) -> usize {
+        self.term
+    }
+
+    pub fn body(&self) -> &ResponseBody {
+        &self.body
+    }
 }
