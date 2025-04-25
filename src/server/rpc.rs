@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 pub enum RequestBody {
     AppendEntries {
         leader_id: uuid::Uuid,
-        _entries: Vec<String>, // try and remove owned string later.
+        entries: Vec<String>, // try and remove owned string later.
     },
     RequestVote {
         candidate_id: uuid::Uuid,

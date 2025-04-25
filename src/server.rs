@@ -285,9 +285,15 @@ impl Server {
                     match res {
                         Ok(request) => {
                             match request.body() {
-                                rpc::RequestBody::AppendEntries { leader_id, .. } => {
+                                rpc::RequestBody::AppendEntries { leader_id, entries } => {
                                     if id != *leader_id {
-                                        naive_logging::log(self.id, &format!("received APPEND_ENTRIES from {leader_id}"));
+                                        naive_logging::log(
+                                            self.id,
+                                            &format!(
+                                                "<- APPEND_ENTRIES {{ term: {}, leader_id: {}, entries: {:?} }}",
+                                                request.term(), leader_id, entries
+                                            ),
+                                        );
 
                                         let current_term = {
                                             let conn = self.cluster_conn.lock().await;
@@ -325,18 +331,24 @@ impl Server {
                                 rpc::RequestBody::RequestVote { candidate_id, .. } => {
                                     if id != *candidate_id {
                                         // Received request from candidate:
-                                        naive_logging::log(self.id, &format!("received REQUEST_VOTE from {} with term {}", candidate_id, request.term()));
+                                        naive_logging::log(
+                                            self.id,
+                                            &format!(
+                                                "<- REQUEST_VOTE {{ term: {}, candidate_id: {} }}",
+                                                request.term(),
+                                                candidate_id,
+                                            ),
+                                        );
 
                                         let current_term = {
                                             let conn = self.cluster_conn.lock().await;
                                             conn.current_term()
                                         };
 
-                                        let should_grant_vote = request.term() >= current_term;
+                                        let vote_granted = request.term() >= current_term;
 
-                                        if should_grant_vote {
+                                        if vote_granted {
                                             reset_timeout(&mut timeout);
-
                                             naive_logging::log(self.id, &format!("granting vote to candidate {candidate_id}"));
                                             self.vote(Some(*candidate_id));
                                         } else {
@@ -346,7 +358,7 @@ impl Server {
                                         if request.can_respond() {
                                             if let Err(err) = request.respond(
                                                 current_term,
-                                                rpc::ResponseBody::RequestVote { vote_granted: should_grant_vote },
+                                                rpc::ResponseBody::RequestVote { vote_granted },
                                             ).await {
                                                 naive_logging::log(self.id, &format!("failed to respond to {candidate_id}: {err}"));
                                                 continue;

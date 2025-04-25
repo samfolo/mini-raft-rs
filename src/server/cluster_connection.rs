@@ -44,8 +44,8 @@ impl ClusterConnection {
         naive_logging::log(
             self.node_id,
             &format!(
-                "sending REQUEST_VOTE with current_term {}",
-                self.current_term
+                "-> REQUEST_VOTE {{ term: {}, candidate_id: {} }}",
+                self.current_term, self.node_id
             ),
         );
 
@@ -70,7 +70,10 @@ impl ClusterConnection {
     ) -> anyhow::Result<mpsc::Receiver<rpc::ServerResponse>> {
         naive_logging::log(
             self.node_id,
-            &format!("sending APPEND_ENTRIES with {} entries", entries.len()),
+            &format!(
+                "-> APPEND_ENTRIES {{ term: {}, leader_id: {}, entries: {:?} }}",
+                self.current_term, self.node_id, entries
+            ),
         );
 
         let (responder, receiver) = mpsc::channel(Self::MESSAGE_BUFFER_SIZE);
@@ -80,7 +83,7 @@ impl ClusterConnection {
             responder,
             rpc::RequestBody::AppendEntries {
                 leader_id: self.node_id,
-                _entries: entries,
+                entries,
             },
         ))?;
 
