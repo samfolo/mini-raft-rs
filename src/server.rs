@@ -112,12 +112,19 @@ impl Server {
         Ok(())
     }
 
+    fn voted_for(&self) -> Option<uuid::Uuid> {
+        match self.voted_for.read() {
+            Ok(res) => *res,
+            Err(err) => panic!("failed to read voted_for: {err:?}"),
+        }
+    }
+
     fn vote(&self, candidate_id: Option<uuid::Uuid>) {
         match self.voted_for.write() {
             Ok(mut res) => {
                 *res = candidate_id;
             }
-            Err(err) => panic!("{err:?}"),
+            Err(err) => panic!("failed to modify voted_for: {err:?}"),
         };
     }
 
@@ -263,7 +270,7 @@ impl Server {
         loop {
             tokio::select! {
                 _ = &mut timeout => {
-                    if *mode.borrow() == ServerMode::Follower {
+                    if *mode.borrow() == ServerMode::Follower && self.voted_for().is_none() {
                         naive_logging::log(id, "timed out waiting for a response...");
                         naive_logging::log(id, "starting election...");
 
@@ -288,14 +295,6 @@ impl Server {
                                         };
 
                                         let is_stale_request = request.term() < current_term;
-                                        let previously_voted_for_leader = {
-                                            match self.voted_for.read() {
-                                                Ok(vote) => vote.is_some_and(|id| id == *leader_id),
-                                                Err(err) => return Err(ClusterNodeError::Unexpected(anyhow::anyhow!(
-                                                    "failed to read current vote: {:?}", err
-                                                )))
-                                            }
-                                        };
 
                                         if is_stale_request {
                                             naive_logging::log(self.id, &format!("rejecting request from stale leader {leader_id}"));
@@ -303,7 +302,7 @@ impl Server {
                                             // Received request from leader; reset the election timeout:
                                             reset_timeout(&mut timeout);
 
-                                            if !previously_voted_for_leader {
+                                            if self.voted_for().is_none_or(|id| id != *leader_id) {
                                                 naive_logging::log(self.id, &format!("acknowledging new leader {leader_id}"));
                                                 self.vote(Some(*leader_id));
                                             }
@@ -333,14 +332,7 @@ impl Server {
                                             conn.current_term()
                                         };
 
-                                        let is_currently_leader = *mode.borrow() == ServerMode::Leader;
-
-                                        let should_grant_vote = if is_currently_leader {
-                                            naive_logging::log(self.id, &format!("leader? {}, req? {} <=> ", current_term, request.term()));
-                                            request.term() > current_term
-                                        } else {
-                                            request.term() >= current_term
-                                        };
+                                        let should_grant_vote = request.term() >= current_term;
 
                                         if should_grant_vote {
                                             reset_timeout(&mut timeout);
@@ -408,11 +400,11 @@ impl Drop for Server {
 mod tests {
     use super::*;
 
-    const TEST_CANNEL_CAPACITY: usize = 16;
+    const TEST_CHANNEL_CAPACITY: usize = 16;
 
     #[test]
     fn starts() -> anyhow::Result<()> {
-        let (publisher, _subscriber) = broadcast::channel(TEST_CANNEL_CAPACITY);
+        let (publisher, _subscriber) = broadcast::channel(TEST_CHANNEL_CAPACITY);
         let (_, cluster_node_count) = watch::channel(1);
 
         let _ = Server::new(
