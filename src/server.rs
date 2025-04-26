@@ -57,7 +57,7 @@ impl Server {
         cluster_node_count: watch::Receiver<u64>,
     ) -> Self {
         let id = domain::node_id::NodeId::new();
-        naive_logging::log(id, "initialised.");
+        naive_logging::log(&id, "initialised.");
 
         let (state_tx, state) = watch::channel(ServerState::Follower);
 
@@ -121,7 +121,7 @@ impl Server {
     /// immediately reverts to follower state.
     fn downgrade_to_follower(&self) -> Result<(), watch::error::SendError<ServerState>> {
         if *self.state.borrow() != ServerState::Follower {
-            naive_logging::log(self.id, "downgrading to follower...");
+            naive_logging::log(&self.id, "downgrading to follower...");
             return self.state_tx.send(ServerState::Follower);
         }
 
@@ -132,7 +132,7 @@ impl Server {
     /// transitions to candidate state
     fn upgrade_to_candidate(&self) -> Result<(), watch::error::SendError<ServerState>> {
         if *self.state.borrow() != ServerState::Candidate {
-            naive_logging::log(self.id, "upgrading to candidate...");
+            naive_logging::log(&self.id, "upgrading to candidate...");
             return self.state_tx.send(ServerState::Candidate);
         }
 
@@ -144,7 +144,7 @@ impl Server {
     /// candidate wins an election, it becomes leader.
     fn upgrade_to_leader(&self) -> Result<(), watch::error::SendError<ServerState>> {
         if *self.state.borrow() != ServerState::Leader {
-            naive_logging::log(self.id, "upgrading to leader...");
+            naive_logging::log(&self.id, "upgrading to leader...");
             return self.state_tx.send(ServerState::Leader);
         }
 
@@ -177,7 +177,7 @@ impl Server {
 
 impl cluster_node::ClusterNode for Server {
     async fn run(&self) -> Result<domain::node_id::NodeId, ClusterNodeError> {
-        naive_logging::log(self.id, "running...");
+        naive_logging::log(&self.id, "running...");
 
         match tokio::try_join!(
             self.run_election_routine(),
@@ -198,7 +198,7 @@ impl cluster_node::ClusterNode for Server {
 
 impl Drop for Server {
     fn drop(&mut self) {
-        naive_logging::log(self.id, "Shutting down...");
+        naive_logging::log(&self.id, "Shutting down...");
     }
 }
 

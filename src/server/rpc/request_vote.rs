@@ -15,7 +15,7 @@ impl Server {
         let current_term = self.current_term();
 
         naive_logging::log(
-            self.id,
+            &self.id,
             &format!(
                 "-> REQUEST_VOTE {{ term: {}, candidate_id: {} }}",
                 current_term, self.id

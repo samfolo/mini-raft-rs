@@ -6,7 +6,6 @@ use crate::{cluster_node, server, timeout};
 
 type Publisher = broadcast::Sender<server::ServerRequest>;
 type Subscriber = broadcast::Receiver<server::ServerRequest>;
-type NodeInit<N> = Box<dyn FnOnce(Publisher, Subscriber) -> N>;
 
 /// A Raft cluster contains several servers
 pub struct Cluster {
@@ -55,7 +54,7 @@ impl Cluster {
 
     async fn register_node<N: cluster_node::ClusterNode + Sync>(
         &mut self,
-        node_init: NodeInit<N>,
+        node_init: impl FnOnce(Publisher, Subscriber) -> N,
     ) -> &mut Self {
         let publisher = self.publisher.clone();
         let subscriber = publisher.subscribe();
@@ -70,7 +69,7 @@ impl Cluster {
         for _ in 0..self.node_count {
             let cluster_node_count = cluster_node_count_tx.subscribe();
 
-            self.register_node(Box::new(move |tx, _rx| {
+            self.register_node(move |tx, _rx| {
                 server::Server::new(
                     tx,
                     time::Duration::from_millis(self.heartbeat_interval),
@@ -80,7 +79,7 @@ impl Cluster {
                     ),
                     cluster_node_count,
                 )
-            }))
+            })
             .await;
         }
 
