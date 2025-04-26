@@ -1,3 +1,4 @@
+mod log;
 mod routines;
 mod rpc;
 
@@ -35,6 +36,7 @@ pub struct Server {
     // -----------------------------------------------------
     current_term: RwLock<usize>,
     voted_for: RwLock<Option<domain::node_id::NodeId>>,
+    log: log::ServerLog,
 
     // Cluster configuration:
     // -----------------------------------------------------
@@ -77,6 +79,7 @@ impl Server {
             // -----------------------------------------------------
             current_term: RwLock::new(0),
             voted_for: RwLock::new(None),
+            log: Default::default(),
 
             // Cluster configuration:
             // -----------------------------------------------------

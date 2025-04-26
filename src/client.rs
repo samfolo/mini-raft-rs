@@ -3,9 +3,8 @@ mod request;
 pub mod error;
 
 use error::ClientRequestError;
-pub use request::{ClientRequest, ClientResponse};
+pub use request::{ClientRequest, ClientRequestBody, ClientResponse, Op, StateKey};
 
-use request::{ClientRequestBody, Op, StateKey};
 use tokio::{
     sync::{broadcast, mpsc},
     time,
