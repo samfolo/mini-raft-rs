@@ -35,6 +35,8 @@ impl Server {
                                         &format!("{} <- CLIENT_REQUEST: {}", self.listener, body),
                                     );
 
+                                    self.append_to_log(body);
+
                                     if let Err(err) = responder.send(client::ClientResponse::new(true)).await {
                                         return Err(ClusterNodeError::Unexpected(err.into()));
                                     }

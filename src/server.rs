@@ -10,7 +10,10 @@ use tokio::{
     time,
 };
 
-use crate::{client, cluster_node, domain, naive_logging, timeout};
+use crate::{
+    client::{self, ClientRequestBody},
+    cluster_node, domain, naive_logging, timeout,
+};
 use crate::{cluster_node::error::ClusterNodeError, domain::listener};
 
 /// At any given time each server is in one of three states:
@@ -174,6 +177,10 @@ impl Server {
             }
             Err(err) => panic!("failed to modify voted_for: {err:?}"),
         };
+    }
+
+    fn append_to_log(&self, command: ClientRequestBody) {
+        self.log.append_cmd(self.current_term(), command);
     }
 }
 
