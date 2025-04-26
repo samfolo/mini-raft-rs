@@ -1,6 +1,6 @@
 use std::fmt;
 
-use tokio::sync::broadcast;
+use tokio::{sync::broadcast, time};
 
 use crate::{domain, errors};
 
@@ -18,6 +18,8 @@ pub enum ClientRequestError {
         domain::node_id::NodeId,
         #[source] broadcast::error::SendError<ClientRequest>,
     ),
+    #[error("Timed out waitng for response")]
+    Timeout(#[from] time::error::Elapsed),
     #[error("Something went wrong")]
     Unexpected(#[from] anyhow::Error),
 }

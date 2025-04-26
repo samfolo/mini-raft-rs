@@ -1,3 +1,5 @@
+use std::fmt;
+
 use tokio::sync::mpsc;
 
 /// StateKey represents the location of the target state client request was made to update.
@@ -16,6 +18,20 @@ pub enum Op {
     Replace,
 }
 
+impl fmt::Display for Op {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Op::Increment => '+',
+                Op::Decrement => '-',
+                Op::Replace => '=',
+            }
+        )
+    }
+}
+
 /// ClientRequestBody represents the body of a ClientRequest.
 #[derive(Debug, Clone, Copy)]
 pub struct ClientRequestBody {
@@ -25,6 +41,10 @@ pub struct ClientRequestBody {
 }
 
 impl ClientRequestBody {
+    pub fn new(op: Op, key: StateKey, value: i64) -> Self {
+        Self { op, key, value }
+    }
+
     pub fn op(&self) -> Op {
         self.op
     }
@@ -35,6 +55,12 @@ impl ClientRequestBody {
 
     pub fn value(&self) -> i64 {
         self.value
+    }
+}
+
+impl fmt::Display for ClientRequestBody {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "@[ {:?} {} {} ]", self.key, self.op, self.value)
     }
 }
 

@@ -101,7 +101,7 @@ impl Cluster {
         self
     }
 
-    pub async fn run_until_ctrl_c(mut self) {
+    pub async fn run_until_ctrl_c(self) {
         match tokio::signal::ctrl_c().await {
             Ok(_) => self.shutdown().await,
             Err(err) => panic!("{err:?}"),

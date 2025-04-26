@@ -29,7 +29,7 @@ impl Server {
                             client::ClientRequest { responder, body } => {
                                 naive_logging::log(
                                     &self.id,
-                                    &format!("received client request: {body:?}"),
+                                    &format!("{} <- CLIENT_REQUEST: {}", self.listener, body),
                                 );
                             }
                         }
