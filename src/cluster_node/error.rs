@@ -2,7 +2,7 @@ use std::fmt;
 
 use tokio::{sync::broadcast, time};
 
-use crate::{domain, errors, server::rpc};
+use crate::{domain, errors, server};
 
 #[derive(thiserror::Error)]
 pub enum ClusterNodeError {
@@ -16,7 +16,7 @@ pub enum ClusterNodeError {
     #[error("Lost connection to cluster")]
     OutgoingClusterConnection(
         domain::node_id::NodeId,
-        #[source] broadcast::error::SendError<rpc::ServerRequest>,
+        #[source] broadcast::error::SendError<server::ServerRequest>,
     ),
     #[error("Timed out waitng for response")]
     Timeout(#[from] time::error::Elapsed),

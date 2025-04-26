@@ -4,13 +4,13 @@ use tokio::sync::{broadcast, watch};
 
 use crate::{cluster_node, server, timeout};
 
-type Publisher = broadcast::Sender<server::rpc::ServerRequest>;
-type Subscriber = broadcast::Receiver<server::rpc::ServerRequest>;
+type Publisher = broadcast::Sender<server::ServerRequest>;
+type Subscriber = broadcast::Receiver<server::ServerRequest>;
 type NodeInit<N> = Box<dyn FnOnce(Publisher, Subscriber) -> N>;
 
 /// A Raft cluster contains several servers
 pub struct Cluster {
-    nodes: Vec<cluster_node::ClusterNodeHandle>,
+    nodes: cluster_node::ClusterNodeJoinSet,
     publisher: Publisher,
     node_count: u64,
     heartbeat_interval: u64,
@@ -26,7 +26,7 @@ impl Cluster {
     const DEFAULT_MAX_ELECTION_TIMEOUT_MS: u64 = 300;
 
     pub fn new(buffer_size: usize) -> Self {
-        let (publisher, _subscriber) = broadcast::channel(buffer_size);
+        let (publisher, _) = broadcast::channel(buffer_size);
 
         Self {
             publisher,
@@ -48,6 +48,7 @@ impl Cluster {
     }
 
     pub fn with_heartbeat_interval(mut self, interval_ms: u64) -> Self {
+        assert!(interval_ms > 0);
         self.heartbeat_interval = interval_ms;
         self
     }
@@ -59,8 +60,7 @@ impl Cluster {
         let publisher = self.publisher.clone();
         let subscriber = publisher.subscribe();
         let node = node_init(publisher, subscriber);
-        let handle = tokio::spawn(async move { node.run().await });
-        self.nodes.push(handle);
+        self.nodes.spawn(async move { node.run().await });
         self
     }
 
@@ -90,14 +90,8 @@ impl Cluster {
         }
     }
 
-    async fn shutdown(self) {
-        for node in &self.nodes {
-            node.abort();
-        }
-
-        for node in self.nodes {
-            assert!(node.await.unwrap_err().is_cancelled());
-        }
+    async fn shutdown(mut self) {
+        self.nodes.shutdown().await;
     }
 }
 
@@ -167,8 +161,8 @@ mod tests {
 
         let mut node_ids = HashSet::new();
 
-        for handle in test_cluster.nodes {
-            let node_id = handle.await??;
+        for task_result in test_cluster.nodes.join_all().await {
+            let node_id = task_result?;
             node_ids.insert(node_id);
         }
 
