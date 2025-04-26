@@ -7,7 +7,6 @@ use server::{Server, ServerState};
 
 impl Server {
     pub(in crate::server) async fn run_heartbeat_routine(&self) -> cluster_node::Result<()> {
-        let id = self.id;
         let mut state = self.state_tx.subscribe();
 
         let timeout = time::sleep(self.heartbeat_interval);
@@ -24,7 +23,7 @@ impl Server {
                 _ = &mut timeout => {
                     if *state.borrow() == ServerState::Leader {
                         if let Err(err) = self.append_entries(vec![]) {
-                            return Err(ClusterNodeError::Heartbeat(id, err.into()))
+                            return Err(ClusterNodeError::Heartbeat(self.id, err.into()))
                         }
                     }
 

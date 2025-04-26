@@ -15,9 +15,10 @@ impl Server {
         broadcast::error::SendError<rpc::ServerRequest>,
     > {
         naive_logging::log(
-            self.id,
+            &self.id,
             &format!(
-                "-> APPEND_ENTRIES {{ term: {}, leader_id: {}, entries: {:?} }}",
+                "{} -> APPEND_ENTRIES {{ term: {}, leader_id: {}, entries: {:?} }}",
+                self.listener,
                 self.current_term(),
                 self.id,
                 entries

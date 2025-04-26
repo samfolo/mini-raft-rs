@@ -7,7 +7,6 @@ use server::{Server, ServerState, rpc};
 
 impl Server {
     pub(in crate::server) async fn run_election_routine(&self) -> cluster_node::Result<()> {
-        let id = self.id;
         let mut state = self.state_tx.subscribe();
 
         loop {
@@ -26,10 +25,10 @@ impl Server {
                                 match err {
                                     ClusterNodeError::Timeout(_) => {
                                         naive_logging::log(
-                                            id,
+                                            &self.id,
                                             "election ended before enough votes were received.",
                                         );
-                                        naive_logging::log(id, "restarting election...");
+                                        naive_logging::log(&self.id, "restarting election...");
                                     }
                                     other_err => return Err(other_err),
                                 }
@@ -38,7 +37,7 @@ impl Server {
                             }
                         }
                         Err(err) => {
-                            return Err(ClusterNodeError::OutgoingClusterConnection(id, err));
+                            return Err(ClusterNodeError::OutgoingClusterConnection(self.id, err));
                         }
                     }
                 }
@@ -63,12 +62,12 @@ impl Server {
                 Ok(Some(res)) => match res.body() {
                     rpc::ResponseBody::RequestVote { vote_granted } => {
                         if *vote_granted {
-                            naive_logging::log(self.id, "received vote for this term");
+                            naive_logging::log(&self.id, "received vote for this term");
                             total_votes_over_term += 1;
 
                             if total_votes_over_term * 2 > current_cluster_node_count {
                                 naive_logging::log(
-                                    self.id,
+                                    &self.id,
                                     &format!("won election for term {current_term}"),
                                 );
 

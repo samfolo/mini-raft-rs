@@ -9,8 +9,8 @@ use tokio::{
     time,
 };
 
-use crate::cluster_node::error::ClusterNodeError;
 use crate::{cluster_node, domain, naive_logging, timeout};
+use crate::{cluster_node::error::ClusterNodeError, domain::listener};
 
 /// At any given time each server is in one of three states:
 /// leader, follower, or candidate.
@@ -29,6 +29,7 @@ pub struct Server {
     id: domain::node_id::NodeId,
     state: watch::Receiver<ServerState>,
     state_tx: watch::Sender<ServerState>,
+    listener: listener::Listener,
 
     // Persistent state:
     // -----------------------------------------------------
@@ -55,9 +56,10 @@ impl Server {
         heartbeat_interval: time::Duration,
         election_timeout_range: timeout::TimeoutRange,
         cluster_node_count: watch::Receiver<u64>,
+        listener: listener::Listener,
     ) -> Self {
         let id = domain::node_id::NodeId::new();
-        naive_logging::log(id, "initialised.");
+        naive_logging::log(&id, "initialised.");
 
         let (state_tx, state) = watch::channel(ServerState::Follower);
 
@@ -67,6 +69,7 @@ impl Server {
             id,
             state,
             state_tx,
+            listener,
 
             // Persistent state:
             // -----------------------------------------------------
@@ -121,7 +124,7 @@ impl Server {
     /// immediately reverts to follower state.
     fn downgrade_to_follower(&self) -> Result<(), watch::error::SendError<ServerState>> {
         if *self.state.borrow() != ServerState::Follower {
-            naive_logging::log(self.id, "downgrading to follower...");
+            naive_logging::log(&self.id, "downgrading to follower...");
             return self.state_tx.send(ServerState::Follower);
         }
 
@@ -132,7 +135,7 @@ impl Server {
     /// transitions to candidate state
     fn upgrade_to_candidate(&self) -> Result<(), watch::error::SendError<ServerState>> {
         if *self.state.borrow() != ServerState::Candidate {
-            naive_logging::log(self.id, "upgrading to candidate...");
+            naive_logging::log(&self.id, "upgrading to candidate...");
             return self.state_tx.send(ServerState::Candidate);
         }
 
@@ -144,7 +147,7 @@ impl Server {
     /// candidate wins an election, it becomes leader.
     fn upgrade_to_leader(&self) -> Result<(), watch::error::SendError<ServerState>> {
         if *self.state.borrow() != ServerState::Leader {
-            naive_logging::log(self.id, "upgrading to leader...");
+            naive_logging::log(&self.id, "upgrading to leader...");
             return self.state_tx.send(ServerState::Leader);
         }
 
@@ -177,7 +180,7 @@ impl Server {
 
 impl cluster_node::ClusterNode for Server {
     async fn run(&self) -> Result<domain::node_id::NodeId, ClusterNodeError> {
-        naive_logging::log(self.id, "running...");
+        naive_logging::log(&self.id, "running...");
 
         match tokio::try_join!(
             self.run_election_routine(),
@@ -198,7 +201,7 @@ impl cluster_node::ClusterNode for Server {
 
 impl Drop for Server {
     fn drop(&mut self) {
-        naive_logging::log(self.id, "Shutting down...");
+        naive_logging::log(&self.id, "Shutting down...");
     }
 }
 
@@ -213,11 +216,14 @@ mod tests {
         let (publisher, _subscriber) = broadcast::channel(TEST_CHANNEL_CAPACITY);
         let (_, cluster_node_count) = watch::channel(1);
 
+        let listener = listener::Listener::bind_random_local_port().unwrap();
+
         let _ = Server::new(
             publisher,
             time::Duration::from_millis(5),
             timeout::TimeoutRange::new(10, 20),
             cluster_node_count,
+            listener,
         );
 
         Ok(())
