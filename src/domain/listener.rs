@@ -1,8 +1,5 @@
 use std::fmt;
-use tokio::{
-    io,
-    net::{TcpListener, TcpStream},
-};
+use tokio::net::TcpListener;
 
 use anyhow::bail;
 
@@ -34,10 +31,6 @@ impl Listener {
             _inner: listener,
             port: local_addr.port(),
         })
-    }
-
-    pub fn accept(&self) -> impl Future<Output = io::Result<(TcpStream, std::net::SocketAddr)>> {
-        self._inner.accept()
     }
 }
 

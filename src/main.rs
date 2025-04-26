@@ -18,7 +18,7 @@ async fn main() {
     time::sleep(time::Duration::from_millis(2000)).await;
 
     client::RandomDataClient::new()
-        .with_request_interval_range(1000, 1500)
+        .with_request_interval_range(550, 887)
         .connect_to_cluster(&cluster)
         .make_random_requests()
         .await

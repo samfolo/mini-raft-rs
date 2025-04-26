@@ -24,9 +24,9 @@ impl fmt::Display for Op {
             f,
             "{}",
             match self {
-                Op::Increment => '+',
-                Op::Decrement => '-',
-                Op::Replace => '=',
+                Op::Increment => "+=",
+                Op::Decrement => "-=",
+                Op::Replace => "<=",
             }
         )
     }
@@ -60,7 +60,11 @@ impl ClientRequestBody {
 
 impl fmt::Display for ClientRequestBody {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "@[ {:?} {} {} ]", self.key, self.op, self.value)
+        write!(
+            f,
+            "{{ command: [ State.{:?} {} {} ] }}",
+            self.key, self.op, self.value
+        )
     }
 }
 
@@ -99,6 +103,10 @@ pub struct ClientResponse {
 }
 
 impl ClientResponse {
+    pub fn new(success: bool) -> Self {
+        Self { success }
+    }
+
     pub fn success(&self) -> bool {
         self.success
     }

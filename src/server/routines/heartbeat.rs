@@ -21,7 +21,7 @@ impl Server {
         loop {
             tokio::select! {
                 _ = &mut timeout => {
-                    if *state.borrow() == ServerState::Leader {
+                    if *state.borrow_and_update() == ServerState::Leader {
                         if let Err(err) = self.append_entries(vec![]) {
                             return Err(ClusterNodeError::Heartbeat(self.id, err.into()))
                         }
@@ -34,7 +34,7 @@ impl Server {
                         return Err(ClusterNodeError::Unexpected(err.into()));
                     }
 
-                    if *state.borrow() == ServerState::Leader {
+                    if *state.borrow_and_update() == ServerState::Leader {
                         timeout.as_mut().reset(time::Instant::now());
                     }
                 }

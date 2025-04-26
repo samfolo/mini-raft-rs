@@ -7,7 +7,7 @@ use server::{Server, ServerState, rpc};
 
 impl Server {
     pub(in crate::server) async fn run_base_routine(&self) -> cluster_node::Result<()> {
-        let state = self.state_tx.subscribe();
+        let mut state = self.state_tx.subscribe();
         let mut subscriber = self.cluster_conn.subscribe();
 
         let timeout = time::sleep(self.election_timeout_range.random());
@@ -22,7 +22,7 @@ impl Server {
         loop {
             tokio::select! {
                 _ = &mut timeout => {
-                    if *state.borrow() == ServerState::Follower {
+                    if *state.borrow_and_update() == ServerState::Follower {
                         naive_logging::log(&self.id, "timed out waiting for a response...");
                         naive_logging::log(&self.id, "starting election...");
 

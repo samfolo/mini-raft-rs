@@ -9,7 +9,7 @@ impl Server {
     /// The leader handles all client requests; if a client contacts a follower, the
     /// follower redirects it to the leader.
     pub(in crate::server) async fn handle_client_request(&self) -> cluster_node::Result<()> {
-        let state = self.state_tx.subscribe();
+        let mut state = self.state_tx.subscribe();
 
         let mut subscriber = match self.client_conn.upgrade() {
             Some(tx) => tx,
@@ -22,20 +22,39 @@ impl Server {
         .subscribe();
 
         loop {
-            match subscriber.recv().await {
-                Ok(request) => {
-                    if *state.borrow() == ServerState::Leader {
-                        match request {
-                            client::ClientRequest { responder, body } => {
-                                naive_logging::log(
-                                    &self.id,
-                                    &format!("{} <- CLIENT_REQUEST: {}", self.listener, body),
-                                );
+            if *state.borrow_and_update() == ServerState::Leader {
+                loop {
+                    tokio::select! {
+                        req = subscriber.recv() => {
+                            match req {
+                                Ok(request) => {
+                                        match request {
+                                            client::ClientRequest { responder, body } => {
+                                                naive_logging::log(
+                                                    &self.id,
+                                                    &format!("{} <- CLIENT_REQUEST: {}", self.listener, body),
+                                                );
+
+                                                if let Err(err) = responder.send(client::ClientResponse::new(true)).await {
+                                                    return Err(ClusterNodeError::Unexpected(err.into()));
+                                                }
+                                            }
+                                        }
+                                }
+                                Err(err) => return Err(ClusterNodeError::Unexpected(err.into())),
+                            }
+                        },
+                        res = state.changed() => {
+                            if let Err(err) = res {
+                                return Err(ClusterNodeError::Unexpected(err.into()));
                             }
                         }
                     }
                 }
-                Err(err) => return Err(ClusterNodeError::Unexpected(err.into())),
+            } else {
+                if let Err(err) = state.changed().await {
+                    return Err(ClusterNodeError::Unexpected(err.into()));
+                }
             }
         }
     }

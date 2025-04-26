@@ -10,7 +10,7 @@ impl Server {
         let mut state = self.state_tx.subscribe();
 
         loop {
-            if *state.borrow() == ServerState::Candidate {
+            if *state.borrow_and_update() == ServerState::Candidate {
                 'election_loop: loop {
                     self.set_current_term(|prev| prev + 1);
 

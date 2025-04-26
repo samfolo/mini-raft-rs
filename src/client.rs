@@ -3,8 +3,9 @@ mod request;
 pub mod error;
 
 use error::ClientRequestError;
-pub use request::ClientRequest;
-use request::{ClientRequestBody, ClientResponse, Op, StateKey};
+pub use request::{ClientRequest, ClientResponse};
+
+use request::{ClientRequestBody, Op, StateKey};
 use tokio::{
     sync::{broadcast, mpsc},
     time,
@@ -82,6 +83,11 @@ impl RandomDataClient {
         let op = Self::OPS[rand::random_range(0..3) as usize];
         let state_key = Self::STATE_KEYS[rand::random_range(0..3) as usize];
         let body = ClientRequestBody::new(op, state_key, rand::random_range(0..=100));
+
+        naive_logging::log(
+            &self.id,
+            &format!("-> sending request to the cluster: {}", body),
+        );
 
         if let Err(err) = self.conn.send(ClientRequest { responder, body }) {
             return Err(ClientRequestError::Unexpected(err.into()));
