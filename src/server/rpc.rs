@@ -5,9 +5,9 @@ use tokio::sync::mpsc;
 
 use crate::domain;
 
-/// RequestBody represents the body of a ServerRequest.
+/// ServerRequestBody represents the body of a ServerRequest.
 #[derive(Clone, Debug)]
-pub enum RequestBody {
+pub enum ServerRequestBody {
     AppendEntries {
         leader_id: domain::node_id::NodeId,
         entries: Vec<String>, // try and remove owned string later.
@@ -22,11 +22,15 @@ pub enum RequestBody {
 pub struct ServerRequest {
     term: usize,
     responder: mpsc::Sender<ServerResponse>,
-    body: RequestBody,
+    body: ServerRequestBody,
 }
 
 impl ServerRequest {
-    pub fn new(term: usize, responder: mpsc::Sender<ServerResponse>, body: RequestBody) -> Self {
+    pub fn new(
+        term: usize,
+        responder: mpsc::Sender<ServerResponse>,
+        body: ServerRequestBody,
+    ) -> Self {
         Self {
             term,
             responder,
@@ -38,7 +42,7 @@ impl ServerRequest {
         self.term
     }
 
-    pub fn body(&self) -> &RequestBody {
+    pub fn body(&self) -> &ServerRequestBody {
         &self.body
     }
 
@@ -49,15 +53,15 @@ impl ServerRequest {
     pub async fn respond(
         &self,
         term: usize,
-        body: ResponseBody,
+        body: ServerResponseBody,
     ) -> Result<(), mpsc::error::SendError<ServerResponse>> {
         self.responder.send(ServerResponse { term, body }).await
     }
 }
 
-/// ResponseBody represents the body of a ServerResponse
+/// ServerResponseBody represents the body of a ServerResponse
 #[derive(Clone, Debug)]
-pub enum ResponseBody {
+pub enum ServerResponseBody {
     AppendEntries {},
     RequestVote { vote_granted: bool },
 }
@@ -66,7 +70,7 @@ pub enum ResponseBody {
 #[derive(Clone, Debug)]
 pub struct ServerResponse {
     term: usize,
-    body: ResponseBody,
+    body: ServerResponseBody,
 }
 
 impl ServerResponse {
@@ -74,7 +78,7 @@ impl ServerResponse {
         self.term
     }
 
-    pub fn body(&self) -> &ResponseBody {
+    pub fn body(&self) -> &ServerResponseBody {
         &self.body
     }
 }

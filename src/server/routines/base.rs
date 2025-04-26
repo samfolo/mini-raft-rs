@@ -8,7 +8,7 @@ use server::{Server, ServerState, rpc};
 impl Server {
     pub(in crate::server) async fn run_base_routine(&self) -> cluster_node::Result<()> {
         let state = self.state_tx.subscribe();
-        let mut subscriber = self.publisher.subscribe();
+        let mut subscriber = self.cluster_conn.subscribe();
 
         let timeout = time::sleep(self.election_timeout_range.random());
         tokio::pin!(timeout);
@@ -37,7 +37,7 @@ impl Server {
                     match res {
                         Ok(request) => {
                             match request.body() {
-                                rpc::RequestBody::AppendEntries { leader_id, entries } => {
+                                rpc::ServerRequestBody::AppendEntries { leader_id, entries } => {
                                     if self.id != *leader_id {
                                         naive_logging::log(
                                             &self.id,
@@ -66,7 +66,7 @@ impl Server {
                                         if request.can_respond() {
                                             if let Err(err) = request.respond(
                                                 current_term,
-                                                rpc::ResponseBody::AppendEntries { },
+                                                rpc::ServerResponseBody::AppendEntries { },
                                             ).await {
                                                 return Err(ClusterNodeError::Unexpected(err.into()));
                                             }
@@ -77,7 +77,7 @@ impl Server {
                                         }
                                     }
                                 }
-                                rpc::RequestBody::RequestVote { candidate_id, .. } => {
+                                rpc::ServerRequestBody::RequestVote { candidate_id, .. } => {
                                     if self.id != *candidate_id {
                                         // Received request from candidate:
                                         naive_logging::log(
@@ -105,7 +105,7 @@ impl Server {
                                         if request.can_respond() {
                                             if let Err(err) = request.respond(
                                                 current_term,
-                                                rpc::ResponseBody::RequestVote { vote_granted },
+                                                rpc::ServerResponseBody::RequestVote { vote_granted },
                                             ).await {
                                                 return Err(ClusterNodeError::Unexpected(err.into()));
                                             }

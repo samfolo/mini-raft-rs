@@ -60,7 +60,7 @@ impl Server {
         loop {
             match time::timeout(timeout, response.recv()).await {
                 Ok(Some(res)) => match res.body() {
-                    rpc::ResponseBody::RequestVote { vote_granted } => {
+                    rpc::ServerResponseBody::RequestVote { vote_granted } => {
                         if *vote_granted {
                             naive_logging::log(&self.id, "received vote for this term");
                             total_votes_over_term += 1;
@@ -81,7 +81,7 @@ impl Server {
                             return Err(ClusterNodeError::Unexpected(err.into()));
                         }
                     }
-                    rpc::ResponseBody::AppendEntries { .. } => {
+                    rpc::ServerResponseBody::AppendEntries { .. } => {
                         return Err(ClusterNodeError::Unexpected(anyhow::anyhow!(
                             "invalid response [AppendEntries] to RequestVote RPC"
                         )));

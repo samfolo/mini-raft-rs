@@ -1,3 +1,4 @@
+mod client;
 mod cluster_node;
 mod domain;
 mod errors;

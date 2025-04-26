@@ -27,10 +27,10 @@ impl Server {
 
         let (responder, receiver) = mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
 
-        self.publisher.send(rpc::ServerRequest::new(
+        self.cluster_conn.send(rpc::ServerRequest::new(
             self.current_term(),
             responder,
-            rpc::RequestBody::AppendEntries {
+            rpc::ServerRequestBody::AppendEntries {
                 leader_id: self.id,
                 entries,
             },

@@ -9,7 +9,7 @@ use tokio::{
     time,
 };
 
-use crate::{cluster_node, domain, naive_logging, timeout};
+use crate::{client, cluster_node, domain, naive_logging, timeout};
 use crate::{cluster_node::error::ClusterNodeError, domain::listener};
 
 /// At any given time each server is in one of three states:
@@ -39,7 +39,8 @@ pub struct Server {
     // Cluster configuration:
     // -----------------------------------------------------
     cluster_node_count: watch::Receiver<u64>,
-    publisher: broadcast::Sender<rpc::ServerRequest>,
+    cluster_conn: broadcast::Sender<rpc::ServerRequest>,
+    client_recv: broadcast::Receiver<client::ClientRequest>,
     heartbeat_interval: time::Duration,
     election_timeout_range: timeout::TimeoutRange,
 }
@@ -52,7 +53,8 @@ impl Server {
     const DEFAULT_MESSAGE_BUFFER_SIZE: usize = 32;
 
     pub fn new(
-        publisher: broadcast::Sender<rpc::ServerRequest>,
+        cluster_conn: broadcast::Sender<rpc::ServerRequest>,
+        client_recv: broadcast::Receiver<client::ClientRequest>,
         heartbeat_interval: time::Duration,
         election_timeout_range: timeout::TimeoutRange,
         cluster_node_count: watch::Receiver<u64>,
@@ -79,7 +81,8 @@ impl Server {
             // Cluster configuration:
             // -----------------------------------------------------
             cluster_node_count,
-            publisher,
+            cluster_conn,
+            client_recv,
             heartbeat_interval,
             election_timeout_range,
         }
@@ -169,13 +172,6 @@ impl Server {
             Err(err) => panic!("failed to modify voted_for: {err:?}"),
         };
     }
-
-    /// The leader handles all client requests; if a client contacts a follower, the
-    /// follower redirects it to the leader.
-    #[allow(unused)]
-    async fn handle_client_request(&self, _: ()) -> anyhow::Result<()> {
-        todo!("unimplemented")
-    }
 }
 
 impl cluster_node::ClusterNode for Server {
@@ -211,15 +207,17 @@ mod tests {
 
     const TEST_CHANNEL_CAPACITY: usize = 16;
 
-    #[test]
-    fn starts() -> anyhow::Result<()> {
-        let (publisher, _subscriber) = broadcast::channel(TEST_CHANNEL_CAPACITY);
+    #[tokio::test]
+    async fn starts() -> anyhow::Result<()> {
+        let (cluster_conn, _) = broadcast::channel(TEST_CHANNEL_CAPACITY);
+        let (_, client_recv) = broadcast::channel(TEST_CHANNEL_CAPACITY);
         let (_, cluster_node_count) = watch::channel(1);
 
-        let listener = listener::Listener::bind_random_local_port().unwrap();
+        let listener = listener::Listener::bind_random_local_port().await?;
 
         let _ = Server::new(
-            publisher,
+            cluster_conn,
+            client_recv,
             time::Duration::from_millis(5),
             timeout::TimeoutRange::new(10, 20),
             cluster_node_count,

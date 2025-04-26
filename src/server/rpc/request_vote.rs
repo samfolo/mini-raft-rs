@@ -24,10 +24,10 @@ impl Server {
 
         let (responder, receiver) = mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
 
-        self.publisher.send(rpc::ServerRequest::new(
+        self.cluster_conn.send(rpc::ServerRequest::new(
             current_term,
             responder,
-            rpc::RequestBody::RequestVote {
+            rpc::ServerRequestBody::RequestVote {
                 candidate_id: self.id,
             },
         ))?;
