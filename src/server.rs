@@ -9,8 +9,8 @@ use tokio::{
     time,
 };
 
-use crate::cluster_node::error::ClusterNodeError;
 use crate::{cluster_node, domain, naive_logging, timeout};
+use crate::{cluster_node::error::ClusterNodeError, domain::listener};
 
 /// At any given time each server is in one of three states:
 /// leader, follower, or candidate.
@@ -29,6 +29,7 @@ pub struct Server {
     id: domain::node_id::NodeId,
     state: watch::Receiver<ServerState>,
     state_tx: watch::Sender<ServerState>,
+    listener: listener::Listener,
 
     // Persistent state:
     // -----------------------------------------------------
@@ -55,6 +56,7 @@ impl Server {
         heartbeat_interval: time::Duration,
         election_timeout_range: timeout::TimeoutRange,
         cluster_node_count: watch::Receiver<u64>,
+        listener: listener::Listener,
     ) -> Self {
         let id = domain::node_id::NodeId::new();
         naive_logging::log(&id, "initialised.");
@@ -67,6 +69,7 @@ impl Server {
             id,
             state,
             state_tx,
+            listener,
 
             // Persistent state:
             // -----------------------------------------------------
@@ -213,11 +216,14 @@ mod tests {
         let (publisher, _subscriber) = broadcast::channel(TEST_CHANNEL_CAPACITY);
         let (_, cluster_node_count) = watch::channel(1);
 
+        let listener = listener::Listener::bind_random_local_port().unwrap();
+
         let _ = Server::new(
             publisher,
             time::Duration::from_millis(5),
             timeout::TimeoutRange::new(10, 20),
             cluster_node_count,
+            listener,
         );
 
         Ok(())

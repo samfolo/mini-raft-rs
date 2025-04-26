@@ -42,8 +42,8 @@ impl Server {
                                         naive_logging::log(
                                             &self.id,
                                             &format!(
-                                                "<- APPEND_ENTRIES {{ term: {}, leader_id: {}, entries: {:?} }}",
-                                                request.term(), leader_id, entries
+                                                "{} <- APPEND_ENTRIES {{ term: {}, leader_id: {}, entries: {:?} }}",
+                                                self.listener, request.term(), leader_id, entries
                                             ),
                                         );
 
@@ -83,7 +83,8 @@ impl Server {
                                         naive_logging::log(
                                             &self.id,
                                             &format!(
-                                                "<- REQUEST_VOTE {{ term: {}, candidate_id: {} }}",
+                                                "{} <- REQUEST_VOTE {{ term: {}, candidate_id: {} }}",
+                                                self.listener,
                                                 request.term(),
                                                 candidate_id,
                                             ),

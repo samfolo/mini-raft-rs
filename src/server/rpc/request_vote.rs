@@ -17,8 +17,8 @@ impl Server {
         naive_logging::log(
             &self.id,
             &format!(
-                "-> REQUEST_VOTE {{ term: {}, candidate_id: {} }}",
-                current_term, self.id
+                "{} -> REQUEST_VOTE {{ term: {}, candidate_id: {} }}",
+                self.listener, current_term, self.id
             ),
         );
 
@@ -37,27 +37,4 @@ impl Server {
 }
 
 #[cfg(test)]
-mod tests {
-    use tokio::{sync::watch, time};
-
-    use crate::timeout;
-
-    use super::*;
-
-    const TEST_CHANNEL_CAPACITY: usize = 16;
-
-    #[test]
-    fn starts() -> anyhow::Result<()> {
-        let (publisher, _subscriber) = broadcast::channel(TEST_CHANNEL_CAPACITY);
-        let (_, cluster_node_count) = watch::channel(1);
-
-        let _ = Server::new(
-            publisher,
-            time::Duration::from_millis(5),
-            timeout::TimeoutRange::new(10, 20),
-            cluster_node_count,
-        );
-
-        Ok(())
-    }
-}
+mod tests {}

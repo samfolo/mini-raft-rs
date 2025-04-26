@@ -2,7 +2,7 @@ use std::time;
 
 use tokio::sync::{broadcast, watch};
 
-use crate::{cluster_node, server, timeout};
+use crate::{cluster_node, domain::listener, server, timeout};
 
 type Publisher = broadcast::Sender<server::ServerRequest>;
 type Subscriber = broadcast::Receiver<server::ServerRequest>;
@@ -68,6 +68,7 @@ impl Cluster {
 
         for _ in 0..self.node_count {
             let cluster_node_count = cluster_node_count_tx.subscribe();
+            let listener = listener::Listener::bind_random_local_port().unwrap();
 
             self.register_node(move |tx, _rx| {
                 server::Server::new(
@@ -78,6 +79,7 @@ impl Cluster {
                         self.max_election_timeout_ms,
                     ),
                     cluster_node_count,
+                    listener,
                 )
             })
             .await;
