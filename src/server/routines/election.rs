@@ -5,10 +5,6 @@ use crate::{cluster_node, naive_logging, server};
 use cluster_node::error::ClusterNodeError;
 use server::{Server, ServerState, rpc};
 
-/// Raft servers communicate using remote procedure calls (RPCs), and the basic
-/// consensus algorithm requires only two types of RPCs:
-/// - `RequestVote`
-/// - `AppendEntries`
 impl Server {
     pub(in crate::server) async fn run_election_routine(&self) -> cluster_node::Result<()> {
         let id = self.id;

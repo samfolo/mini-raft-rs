@@ -4,8 +4,8 @@ use tokio::sync::{broadcast, watch};
 
 use crate::{cluster_node, server, timeout};
 
-type Publisher = broadcast::Sender<server::rpc::ServerRequest>;
-type Subscriber = broadcast::Receiver<server::rpc::ServerRequest>;
+type Publisher = broadcast::Sender<server::ServerRequest>;
+type Subscriber = broadcast::Receiver<server::ServerRequest>;
 type NodeInit<N> = Box<dyn FnOnce(Publisher, Subscriber) -> N>;
 
 /// A Raft cluster contains several servers

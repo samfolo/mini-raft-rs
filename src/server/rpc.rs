@@ -1,3 +1,6 @@
+mod append_entries;
+mod request_vote;
+
 use tokio::sync::mpsc;
 
 use crate::domain;

@@ -1,9 +1,9 @@
 mod routines;
+mod rpc;
 
-pub mod rpc;
+pub use rpc::ServerRequest;
 
 use std::sync::RwLock;
-use tokio::sync::mpsc;
 use tokio::{
     sync::{broadcast, watch},
     time,
@@ -165,66 +165,6 @@ impl Server {
             }
             Err(err) => panic!("failed to modify voted_for: {err:?}"),
         };
-    }
-
-    /// `RequestVote` RPCs are initiated by candidates during elections.
-    pub fn request_vote(
-        &self,
-    ) -> anyhow::Result<
-        mpsc::Receiver<rpc::ServerResponse>,
-        broadcast::error::SendError<rpc::ServerRequest>,
-    > {
-        let current_term = self.current_term();
-
-        naive_logging::log(
-            self.id,
-            &format!(
-                "-> REQUEST_VOTE {{ term: {}, candidate_id: {} }}",
-                current_term, self.id
-            ),
-        );
-
-        let (responder, receiver) = mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
-
-        self.publisher.send(rpc::ServerRequest::new(
-            current_term,
-            responder,
-            rpc::RequestBody::RequestVote {
-                candidate_id: self.id,
-            },
-        ))?;
-
-        Ok(receiver)
-    }
-
-    /// `AppendEntries` RPCs are initiated by leaders to replicate log entries
-    /// and to provide a form of heartbeat.
-    pub fn append_entries(
-        &self,
-        entries: Vec<String>,
-    ) -> anyhow::Result<mpsc::Receiver<rpc::ServerResponse>> {
-        naive_logging::log(
-            self.id,
-            &format!(
-                "-> APPEND_ENTRIES {{ term: {}, leader_id: {}, entries: {:?} }}",
-                self.current_term(),
-                self.id,
-                entries
-            ),
-        );
-
-        let (responder, receiver) = mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
-
-        self.publisher.send(rpc::ServerRequest::new(
-            self.current_term(),
-            responder,
-            rpc::RequestBody::AppendEntries {
-                leader_id: self.id,
-                entries,
-            },
-        ))?;
-
-        Ok(receiver)
     }
 
     /// The leader handles all client requests; if a client contacts a follower, the

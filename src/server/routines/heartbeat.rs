@@ -5,10 +5,6 @@ use crate::{cluster_node, server};
 use cluster_node::error::ClusterNodeError;
 use server::{Server, ServerState};
 
-/// Raft servers communicate using remote procedure calls (RPCs), and the basic
-/// consensus algorithm requires only two types of RPCs:
-/// - `RequestVote`
-/// - `AppendEntries`
 impl Server {
     pub(in crate::server) async fn run_heartbeat_routine(&self) -> cluster_node::Result<()> {
         let id = self.id;
@@ -28,7 +24,7 @@ impl Server {
                 _ = &mut timeout => {
                     if *state.borrow() == ServerState::Leader {
                         if let Err(err) = self.append_entries(vec![]) {
-                            return Err(ClusterNodeError::Heartbeat(id, err))
+                            return Err(ClusterNodeError::Heartbeat(id, err.into()))
                         }
                     }
 
