@@ -15,7 +15,7 @@ use crate::{cluster_node, domain, naive_logging, timeout};
 /// At any given time each server is in one of three states:
 /// leader, follower, or candidate.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ServerMode {
+pub enum ServerState {
     Leader,
     Follower,
     Candidate,
@@ -25,8 +25,8 @@ pub enum ServerMode {
 /// Only one server can be the Leader at any one time.
 pub struct Server {
     id: domain::node_id::NodeId,
-    mode: watch::Receiver<ServerMode>,
-    mode_tx: watch::Sender<ServerMode>,
+    state: watch::Receiver<ServerState>,
+    state_tx: watch::Sender<ServerState>,
     publisher: broadcast::Sender<rpc::ServerRequest>,
     cluster_conn: Arc<Mutex<cluster_connection::ClusterConnection>>,
     heartbeat_interval: time::Duration,
@@ -48,7 +48,7 @@ impl Server {
         let id = domain::node_id::NodeId::new();
         naive_logging::log(id, "initialised.");
 
-        let (mode_tx, mode) = watch::channel(ServerMode::Follower);
+        let (state_tx, state) = watch::channel(ServerState::Follower);
 
         let cluster_conn =
             cluster_connection::ClusterConnection::new(id, publisher.clone(), cluster_node_count);
@@ -56,8 +56,8 @@ impl Server {
 
         Self {
             id,
-            mode,
-            mode_tx,
+            state,
+            state_tx,
             publisher,
             cluster_conn,
             heartbeat_interval,
@@ -72,7 +72,7 @@ impl Server {
     async fn sync_term(
         &self,
         other_server_term: usize,
-    ) -> Result<(), watch::error::SendError<ServerMode>> {
+    ) -> Result<(), watch::error::SendError<ServerState>> {
         let effect = { self.cluster_conn.lock().await.sync_term(other_server_term) };
         if let cluster_connection::SyncTermSideEffect::Downgrade = effect {
             return self.downgrade_to_follower();
@@ -82,22 +82,22 @@ impl Server {
     }
 
     /// If a candidate or leader discovers that its term is out of date, it
-    /// immediately reverts to follower mode.
-    fn downgrade_to_follower(&self) -> Result<(), watch::error::SendError<ServerMode>> {
-        if *self.mode.borrow() != ServerMode::Follower {
+    /// immediately reverts to follower state.
+    fn downgrade_to_follower(&self) -> Result<(), watch::error::SendError<ServerState>> {
+        if *self.state.borrow() != ServerState::Follower {
             naive_logging::log(self.id, "downgrading to follower...");
-            return self.mode_tx.send(ServerMode::Follower);
+            return self.state_tx.send(ServerState::Follower);
         }
 
         Ok(())
     }
 
     /// To begin an election, a follower increments its current term and
-    /// transitions to candidate mode
-    fn upgrade_to_candidate(&self) -> Result<(), watch::error::SendError<ServerMode>> {
-        if *self.mode.borrow() != ServerMode::Candidate {
+    /// transitions to candidate state
+    fn upgrade_to_candidate(&self) -> Result<(), watch::error::SendError<ServerState>> {
+        if *self.state.borrow() != ServerState::Candidate {
             naive_logging::log(self.id, "upgrading to candidate...");
-            return self.mode_tx.send(ServerMode::Candidate);
+            return self.state_tx.send(ServerState::Candidate);
         }
 
         Ok(())
@@ -106,10 +106,10 @@ impl Server {
     /// A candidate wins an election if it receives votes from a majority
     /// of the servers in the full cluster for the same term. Once a
     /// candidate wins an election, it becomes leader.
-    fn upgrade_to_leader(&self) -> Result<(), watch::error::SendError<ServerMode>> {
-        if *self.mode.borrow() != ServerMode::Leader {
+    fn upgrade_to_leader(&self) -> Result<(), watch::error::SendError<ServerState>> {
+        if *self.state.borrow() != ServerState::Leader {
             naive_logging::log(self.id, "upgrading to leader...");
-            return self.mode_tx.send(ServerMode::Leader);
+            return self.state_tx.send(ServerState::Leader);
         }
 
         Ok(())
@@ -140,7 +140,7 @@ impl Server {
 
     async fn run_heartbeat_routine(&self) -> cluster_node::Result<()> {
         let id = self.id;
-        let mut mode = self.mode_tx.subscribe();
+        let mut state = self.state_tx.subscribe();
 
         let timeout = time::sleep(self.heartbeat_interval);
         tokio::pin!(timeout);
@@ -154,7 +154,7 @@ impl Server {
         loop {
             tokio::select! {
                 _ = &mut timeout => {
-                    if *mode.borrow() == ServerMode::Leader {
+                    if *state.borrow() == ServerState::Leader {
                         if let Err(err) = {
                             let conn = self.cluster_conn.lock().await;
                             conn.append_entries(vec![])
@@ -165,12 +165,12 @@ impl Server {
 
                     reset_timeout(&mut timeout);
                 },
-                res = mode.changed() => {
+                res = state.changed() => {
                     if let Err(err) = res {
                         return Err(ClusterNodeError::Unexpected(err.into()));
                     }
 
-                    if *mode.borrow() == ServerMode::Leader {
+                    if *state.borrow() == ServerState::Leader {
                         timeout.as_mut().reset(time::Instant::now());
                     }
                 }
@@ -180,10 +180,10 @@ impl Server {
 
     async fn run_election_routine(&self) -> cluster_node::Result<()> {
         let id = self.id;
-        let mut mode = self.mode_tx.subscribe();
+        let mut state = self.state_tx.subscribe();
 
         loop {
-            if *mode.borrow() == ServerMode::Candidate {
+            if *state.borrow() == ServerState::Candidate {
                 loop {
                     let request_vote_result = {
                         let mut conn = self.cluster_conn.lock().await;
@@ -249,7 +249,7 @@ impl Server {
                         }
                     }
                 }
-            } else if let Err(err) = mode.changed().await {
+            } else if let Err(err) = state.changed().await {
                 return Err(ClusterNodeError::Unexpected(err.into()));
             }
         }
@@ -257,7 +257,7 @@ impl Server {
 
     async fn run_base_routine(&self) -> cluster_node::Result<()> {
         let id = self.id;
-        let mode = self.mode_tx.subscribe();
+        let state = self.state_tx.subscribe();
         let mut subscriber = self.publisher.subscribe();
 
         let timeout = time::sleep(self.election_timeout_range.random());
@@ -272,7 +272,7 @@ impl Server {
         loop {
             tokio::select! {
                 _ = &mut timeout => {
-                    if *mode.borrow() == ServerMode::Follower {
+                    if *state.borrow() == ServerState::Follower {
                         naive_logging::log(id, "timed out waiting for a response...");
                         naive_logging::log(id, "starting election...");
 
@@ -325,7 +325,7 @@ impl Server {
                                             }
                                         }
 
-                                        if let Err(err) =self.sync_term(request.term()).await {
+                                        if let Err(err) = self.sync_term(request.term()).await {
                                             return Err(ClusterNodeError::Unexpected(err.into()));
                                         }
                                     }
@@ -362,12 +362,11 @@ impl Server {
                                                 current_term,
                                                 rpc::ResponseBody::RequestVote { vote_granted },
                                             ).await {
-                                                naive_logging::log(self.id, &format!("failed to respond to {candidate_id}: {err}"));
-                                                continue;
+                                                return Err(ClusterNodeError::Unexpected(err.into()));
                                             }
                                         }
 
-                                        if let Err(err) =self.sync_term(request.term()).await {
+                                        if let Err(err) = self.sync_term(request.term()).await {
                                             return Err(ClusterNodeError::Unexpected(err.into()));
                                         }
                                     }

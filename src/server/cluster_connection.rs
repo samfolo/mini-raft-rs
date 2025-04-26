@@ -36,7 +36,7 @@ impl ClusterConnection {
 
     /// `RequestVote` RPCs are initiated by candidates during elections.
     pub fn request_vote(
-        &mut self,
+        &self,
     ) -> anyhow::Result<
         mpsc::Receiver<rpc::ServerResponse>,
         broadcast::error::SendError<rpc::ServerRequest>,
