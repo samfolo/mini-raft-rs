@@ -40,7 +40,7 @@ pub struct Server {
     // -----------------------------------------------------
     cluster_node_count: watch::Receiver<u64>,
     cluster_conn: broadcast::Sender<rpc::ServerRequest>,
-    client_recv: broadcast::Receiver<client::ClientRequest>,
+    client_conn: broadcast::WeakSender<client::ClientRequest>,
     heartbeat_interval: time::Duration,
     election_timeout_range: timeout::TimeoutRange,
 }
@@ -54,7 +54,7 @@ impl Server {
 
     pub fn new(
         cluster_conn: broadcast::Sender<rpc::ServerRequest>,
-        client_recv: broadcast::Receiver<client::ClientRequest>,
+        client_conn: broadcast::WeakSender<client::ClientRequest>,
         heartbeat_interval: time::Duration,
         election_timeout_range: timeout::TimeoutRange,
         cluster_node_count: watch::Receiver<u64>,
@@ -82,7 +82,7 @@ impl Server {
             // -----------------------------------------------------
             cluster_node_count,
             cluster_conn,
-            client_recv,
+            client_conn,
             heartbeat_interval,
             election_timeout_range,
         }
@@ -181,7 +181,8 @@ impl cluster_node::ClusterNode for Server {
         match tokio::try_join!(
             self.run_election_routine(),
             self.run_heartbeat_routine(),
-            self.run_base_routine()
+            self.run_base_routine(),
+            self.handle_client_request()
         ) {
             Ok(res) => {
                 println!("{res:#?}");
@@ -210,14 +211,15 @@ mod tests {
     #[tokio::test]
     async fn starts() -> anyhow::Result<()> {
         let (cluster_conn, _) = broadcast::channel(TEST_CHANNEL_CAPACITY);
-        let (_, client_recv) = broadcast::channel(TEST_CHANNEL_CAPACITY);
+        let (client_conn, _) = broadcast::channel(TEST_CHANNEL_CAPACITY);
         let (_, cluster_node_count) = watch::channel(1);
 
         let listener = listener::Listener::bind_random_local_port().await?;
+        let client_conn = client_conn.downgrade();
 
         let _ = Server::new(
             cluster_conn,
-            client_recv,
+            client_conn,
             time::Duration::from_millis(5),
             timeout::TimeoutRange::new(10, 20),
             cluster_node_count,
