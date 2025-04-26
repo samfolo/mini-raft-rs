@@ -1,9 +1,8 @@
-mod cluster_connection;
 pub mod rpc;
 
 use std::pin;
-use std::sync::{Arc, RwLock};
-use tokio::sync::Mutex;
+use std::sync::RwLock;
+use tokio::sync::mpsc;
 use tokio::{
     sync::{broadcast, watch},
     time,
@@ -24,14 +23,23 @@ pub enum ServerState {
 /// A Server handles requests from Clients. Within the same Cluster,
 /// Only one server can be the Leader at any one time.
 pub struct Server {
+    // Internal metadata:
+    // -----------------------------------------------------
     id: domain::node_id::NodeId,
     state: watch::Receiver<ServerState>,
     state_tx: watch::Sender<ServerState>,
+
+    // Persistent state:
+    // -----------------------------------------------------
+    current_term: RwLock<usize>,
+    voted_for: RwLock<Option<domain::node_id::NodeId>>,
+
+    // Cluster configuration:
+    // -----------------------------------------------------
+    cluster_node_count: watch::Receiver<u64>,
     publisher: broadcast::Sender<rpc::ServerRequest>,
-    cluster_conn: Arc<Mutex<cluster_connection::ClusterConnection>>,
     heartbeat_interval: time::Duration,
     election_timeout_range: timeout::TimeoutRange,
-    voted_for: RwLock<Option<domain::node_id::NodeId>>,
 }
 
 /// Raft servers communicate using remote procedure calls (RPCs), and the basic
@@ -39,6 +47,8 @@ pub struct Server {
 /// - `RequestVote`
 /// - `AppendEntries`
 impl Server {
+    const MESSAGE_BUFFER_SIZE: usize = 32;
+
     pub fn new(
         publisher: broadcast::Sender<rpc::ServerRequest>,
         heartbeat_interval: time::Duration,
@@ -50,20 +60,41 @@ impl Server {
 
         let (state_tx, state) = watch::channel(ServerState::Follower);
 
-        let cluster_conn =
-            cluster_connection::ClusterConnection::new(id, publisher.clone(), cluster_node_count);
-        let cluster_conn = Arc::new(Mutex::new(cluster_conn));
-
         Self {
+            // Internal metadata:
+            // -----------------------------------------------------
             id,
             state,
             state_tx,
+
+            // Persistent state:
+            // -----------------------------------------------------
+            current_term: RwLock::new(0),
+            voted_for: RwLock::new(None),
+
+            // Cluster configuration:
+            // -----------------------------------------------------
+            cluster_node_count,
             publisher,
-            cluster_conn,
             heartbeat_interval,
             election_timeout_range,
-            voted_for: RwLock::new(None),
         }
+    }
+
+    fn current_term(&self) -> usize {
+        match self.current_term.read() {
+            Ok(res) => *res,
+            Err(err) => panic!("failed to read current_term: {err:?}"),
+        }
+    }
+
+    fn set_current_term(&self, candidate_id_setter: impl Fn(usize) -> usize) {
+        match self.current_term.write() {
+            Ok(mut res) => {
+                *res = candidate_id_setter(*res);
+            }
+            Err(err) => panic!("failed to modify current_term: {err:?}"),
+        };
     }
 
     /// Current terms are exchanged whenever Servers communicate; if
@@ -73,12 +104,16 @@ impl Server {
         &self,
         other_server_term: usize,
     ) -> Result<(), watch::error::SendError<ServerState>> {
-        let effect = { self.cluster_conn.lock().await.sync_term(other_server_term) };
-        if let cluster_connection::SyncTermSideEffect::Downgrade = effect {
+        if self.current_term() < other_server_term {
+            self.set_current_term(|_| other_server_term);
             return self.downgrade_to_follower();
         }
 
         Ok(())
+    }
+
+    fn cluster_node_count(&self) -> u64 {
+        *self.cluster_node_count.borrow()
     }
 
     /// If a candidate or leader discovers that its term is out of date, it
@@ -131,6 +166,66 @@ impl Server {
         };
     }
 
+    /// `RequestVote` RPCs are initiated by candidates during elections.
+    pub fn request_vote(
+        &self,
+    ) -> anyhow::Result<
+        mpsc::Receiver<rpc::ServerResponse>,
+        broadcast::error::SendError<rpc::ServerRequest>,
+    > {
+        let current_term = self.current_term();
+
+        naive_logging::log(
+            self.id,
+            &format!(
+                "-> REQUEST_VOTE {{ term: {}, candidate_id: {} }}",
+                current_term, self.id
+            ),
+        );
+
+        let (responder, receiver) = mpsc::channel(Self::MESSAGE_BUFFER_SIZE);
+
+        self.publisher.send(rpc::ServerRequest::new(
+            current_term,
+            responder,
+            rpc::RequestBody::RequestVote {
+                candidate_id: self.id,
+            },
+        ))?;
+
+        Ok(receiver)
+    }
+
+    /// `AppendEntries` RPCs are initiated by leaders to replicate log entries
+    /// and to provide a form of heartbeat.
+    pub fn append_entries(
+        &self,
+        entries: Vec<String>,
+    ) -> anyhow::Result<mpsc::Receiver<rpc::ServerResponse>> {
+        naive_logging::log(
+            self.id,
+            &format!(
+                "-> APPEND_ENTRIES {{ term: {}, leader_id: {}, entries: {:?} }}",
+                self.current_term(),
+                self.id,
+                entries
+            ),
+        );
+
+        let (responder, receiver) = mpsc::channel(Self::MESSAGE_BUFFER_SIZE);
+
+        self.publisher.send(rpc::ServerRequest::new(
+            self.current_term(),
+            responder,
+            rpc::RequestBody::AppendEntries {
+                leader_id: self.id,
+                entries,
+            },
+        ))?;
+
+        Ok(receiver)
+    }
+
     /// The leader handles all client requests; if a client contacts a follower, the
     /// follower redirects it to the leader.
     #[allow(unused)]
@@ -155,10 +250,7 @@ impl Server {
             tokio::select! {
                 _ = &mut timeout => {
                     if *state.borrow() == ServerState::Leader {
-                        if let Err(err) = {
-                            let conn = self.cluster_conn.lock().await;
-                            conn.append_entries(vec![])
-                        } {
+                        if let Err(err) = self.append_entries(vec![]) {
                             return Err(ClusterNodeError::Heartbeat(id, err))
                         }
                     }
@@ -185,19 +277,13 @@ impl Server {
         loop {
             if *state.borrow() == ServerState::Candidate {
                 loop {
-                    let request_vote_result = {
-                        let mut conn = self.cluster_conn.lock().await;
-                        conn.increment_term();
-                        conn.request_vote()
-                    };
+                    self.set_current_term(|prev| prev + 1);
 
-                    match request_vote_result {
+                    match self.request_vote() {
                         Ok(mut response) => {
                             let timeout = self.election_timeout_range.random();
-                            let (current_term, current_cluster_node_count) = {
-                                let conn = self.cluster_conn.lock().await;
-                                (conn.current_term(), conn.cluster_node_count())
-                            };
+                            let current_term = self.current_term();
+                            let current_cluster_node_count = self.cluster_node_count();
 
                             let mut total_votes_over_term = 0u64;
 
@@ -297,10 +383,7 @@ impl Server {
                                             ),
                                         );
 
-                                        let current_term = {
-                                            let conn = self.cluster_conn.lock().await;
-                                            conn.current_term()
-                                        };
+                                        let current_term =  self.current_term();
 
                                         let is_stale_request = request.term() < current_term;
 
@@ -342,10 +425,7 @@ impl Server {
                                             ),
                                         );
 
-                                        let current_term = {
-                                            let conn = self.cluster_conn.lock().await;
-                                            conn.current_term()
-                                        };
+                                        let current_term = self.current_term();
 
                                         let vote_granted = request.term() >= current_term;
 
