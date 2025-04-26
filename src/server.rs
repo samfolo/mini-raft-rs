@@ -1,8 +1,10 @@
 pub mod rpc;
 
+use rpc::ServerResponse;
 use std::pin;
 use std::sync::RwLock;
 use tokio::sync::mpsc;
+use tokio::time::error::Elapsed;
 use tokio::{
     sync::{broadcast, watch},
     time,
@@ -47,7 +49,7 @@ pub struct Server {
 /// - `RequestVote`
 /// - `AppendEntries`
 impl Server {
-    const MESSAGE_BUFFER_SIZE: usize = 32;
+    const DEFAULT_MESSAGE_BUFFER_SIZE: usize = 32;
 
     pub fn new(
         publisher: broadcast::Sender<rpc::ServerRequest>,
@@ -183,7 +185,7 @@ impl Server {
             ),
         );
 
-        let (responder, receiver) = mpsc::channel(Self::MESSAGE_BUFFER_SIZE);
+        let (responder, receiver) = mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
 
         self.publisher.send(rpc::ServerRequest::new(
             current_term,
@@ -212,7 +214,7 @@ impl Server {
             ),
         );
 
-        let (responder, receiver) = mpsc::channel(Self::MESSAGE_BUFFER_SIZE);
+        let (responder, receiver) = mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
 
         self.publisher.send(rpc::ServerRequest::new(
             self.current_term(),
@@ -276,59 +278,30 @@ impl Server {
 
         loop {
             if *state.borrow() == ServerState::Candidate {
-                loop {
+                'election_loop: loop {
                     self.set_current_term(|prev| prev + 1);
 
                     match self.request_vote() {
                         Ok(mut response) => {
                             let timeout = self.election_timeout_range.random();
-                            let current_term = self.current_term();
-                            let current_cluster_node_count = self.cluster_node_count();
 
-                            let mut total_votes_over_term = 0u64;
-
-                            while let Ok(Some(res)) = time::timeout(timeout, response.recv()).await
+                            if let Err(err) = self
+                                .handle_request_vote_response(timeout, &mut response)
+                                .await
                             {
-                                match res.body() {
-                                    rpc::ResponseBody::RequestVote { vote_granted } => {
-                                        if *vote_granted {
-                                            naive_logging::log(id, "received vote for this term");
-                                            total_votes_over_term += 1;
-                                            if total_votes_over_term * 2
-                                                > current_cluster_node_count
-                                            {
-                                                naive_logging::log(
-                                                    id,
-                                                    &format!(
-                                                        "won election for term {current_term}"
-                                                    ),
-                                                );
-
-                                                if let Err(err) = self.upgrade_to_leader() {
-                                                    return Err(ClusterNodeError::Unexpected(
-                                                        err.into(),
-                                                    ));
-                                                }
-
-                                                return Ok(());
-                                            }
-                                        } else if let Err(err) = self.sync_term(res.term()).await {
-                                            return Err(ClusterNodeError::Unexpected(err.into()));
-                                        }
+                                match err {
+                                    ClusterNodeError::Timeout(_) => {
+                                        naive_logging::log(
+                                            id,
+                                            "election ended before enough votes were received.",
+                                        );
+                                        naive_logging::log(id, "restarting election...");
                                     }
-                                    rpc::ResponseBody::AppendEntries { .. } => {
-                                        return Err(ClusterNodeError::Unexpected(anyhow::anyhow!(
-                                            "invalid response [AppendEntries] to RequestVote RPC"
-                                        )));
-                                    }
+                                    other_err => return Err(other_err),
                                 }
+                            } else {
+                                break 'election_loop;
                             }
-
-                            naive_logging::log(
-                                id,
-                                "election ended before enough votes were received.",
-                            );
-                            naive_logging::log(id, "restarting election...");
                         }
                         Err(err) => {
                             return Err(ClusterNodeError::OutgoingClusterConnection(id, err));
@@ -337,6 +310,52 @@ impl Server {
                 }
             } else if let Err(err) = state.changed().await {
                 return Err(ClusterNodeError::Unexpected(err.into()));
+            }
+        }
+    }
+
+    async fn handle_request_vote_response(
+        &self,
+        timeout: time::Duration,
+        response: &mut mpsc::Receiver<rpc::ServerResponse>,
+    ) -> cluster_node::Result<()> {
+        let current_term = self.current_term();
+        let current_cluster_node_count = self.cluster_node_count();
+
+        let mut total_votes_over_term = 0u64;
+
+        loop {
+            match time::timeout(timeout, response.recv()).await {
+                Ok(Some(res)) => match res.body() {
+                    rpc::ResponseBody::RequestVote { vote_granted } => {
+                        if *vote_granted {
+                            naive_logging::log(self.id, "received vote for this term");
+                            total_votes_over_term += 1;
+
+                            if total_votes_over_term * 2 > current_cluster_node_count {
+                                naive_logging::log(
+                                    self.id,
+                                    &format!("won election for term {current_term}"),
+                                );
+
+                                if let Err(err) = self.upgrade_to_leader() {
+                                    return Err(ClusterNodeError::Unexpected(err.into()));
+                                }
+
+                                return Ok(());
+                            }
+                        } else if let Err(err) = self.sync_term(res.term()).await {
+                            return Err(ClusterNodeError::Unexpected(err.into()));
+                        }
+                    }
+                    rpc::ResponseBody::AppendEntries { .. } => {
+                        return Err(ClusterNodeError::Unexpected(anyhow::anyhow!(
+                            "invalid response [AppendEntries] to RequestVote RPC"
+                        )));
+                    }
+                },
+                Ok(None) => continue,
+                Err(err) => return Err(ClusterNodeError::Timeout(err)),
             }
         }
     }
