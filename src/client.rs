@@ -42,14 +42,12 @@ impl Client for DisconnectedRandomDataClient {
     fn connect_to_cluster(self, cluster: &cluster::Cluster) -> Self::NextType {
         naive_logging::log(&self.id, "connected to cluster.");
 
-        let client = Self::NextType {
+        Self::NextType {
             id: self.id,
             conn: cluster.client_conn(),
             min_request_interval_ms: self.min_request_interval_ms,
             max_request_interval_ms: self.max_request_interval_ms,
-        };
-
-        return client;
+        }
     }
 }
 
@@ -69,7 +67,7 @@ impl RandomDataClient {
     const OPS: [Op; 3] = [Op::Increment, Op::Decrement, Op::Replace];
     const STATE_KEYS: [StateKey; 3] = [StateKey::X, StateKey::Y, StateKey::Z];
 
-    pub fn new() -> DisconnectedRandomDataClient {
+    pub fn init() -> DisconnectedRandomDataClient {
         DisconnectedRandomDataClient {
             id: "[ RndmDataClient ]".to_string(),
             min_request_interval_ms: Self::DEFAULT_MIN_ELECTION_TIMEOUT_MS,

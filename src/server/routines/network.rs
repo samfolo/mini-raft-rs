@@ -28,18 +28,16 @@ impl Server {
                         req = subscriber.recv() => {
                             match req {
                                 Ok(request) => {
-                                        match request {
-                                            client::ClientRequest { responder, body } => {
-                                                naive_logging::log(
-                                                    &self.id,
-                                                    &format!("{} <- CLIENT_REQUEST: {}", self.listener, body),
-                                                );
+                                    let client::ClientRequest { responder, body } =  request;
 
-                                                if let Err(err) = responder.send(client::ClientResponse::new(true)).await {
-                                                    return Err(ClusterNodeError::Unexpected(err.into()));
-                                                }
-                                            }
-                                        }
+                                    naive_logging::log(
+                                        &self.id,
+                                        &format!("{} <- CLIENT_REQUEST: {}", self.listener, body),
+                                    );
+
+                                    if let Err(err) = responder.send(client::ClientResponse::new(true)).await {
+                                        return Err(ClusterNodeError::Unexpected(err.into()));
+                                    }
                                 }
                                 Err(err) => return Err(ClusterNodeError::Unexpected(err.into())),
                             }
@@ -51,10 +49,8 @@ impl Server {
                         }
                     }
                 }
-            } else {
-                if let Err(err) = state.changed().await {
-                    return Err(ClusterNodeError::Unexpected(err.into()));
-                }
+            } else if let Err(err) = state.changed().await {
+                return Err(ClusterNodeError::Unexpected(err.into()));
             }
         }
     }
