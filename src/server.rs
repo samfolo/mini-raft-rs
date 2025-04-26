@@ -1,10 +1,8 @@
 pub mod rpc;
 
-use rpc::ServerResponse;
 use std::pin;
 use std::sync::RwLock;
 use tokio::sync::mpsc;
-use tokio::time::error::Elapsed;
 use tokio::{
     sync::{broadcast, watch},
     time,
@@ -286,7 +284,7 @@ impl Server {
                             let timeout = self.election_timeout_range.random();
 
                             if let Err(err) = self
-                                .handle_request_vote_response(timeout, &mut response)
+                                .handle_timebound_request_vote_response(timeout, &mut response)
                                 .await
                             {
                                 match err {
@@ -314,7 +312,7 @@ impl Server {
         }
     }
 
-    async fn handle_request_vote_response(
+    async fn handle_timebound_request_vote_response(
         &self,
         timeout: time::Duration,
         response: &mut mpsc::Receiver<rpc::ServerResponse>,
@@ -322,7 +320,7 @@ impl Server {
         let current_term = self.current_term();
         let current_cluster_node_count = self.cluster_node_count();
 
-        let mut total_votes_over_term = 0u64;
+        let mut total_votes_over_term = 0;
 
         loop {
             match time::timeout(timeout, response.recv()).await {
