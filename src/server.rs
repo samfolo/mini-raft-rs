@@ -12,7 +12,7 @@ use tokio::{
 
 use crate::{
     client::{self, ClientRequestBody},
-    cluster_node, domain, naive_logging, timeout,
+    cluster_node, domain, naive_logging, state_machine, timeout,
 };
 use crate::{cluster_node::error::ClusterNodeError, domain::listener};
 
@@ -34,12 +34,18 @@ pub struct Server {
     state: watch::Receiver<ServerState>,
     state_tx: watch::Sender<ServerState>,
     listener: listener::Listener,
+    state_machine: state_machine::InMemoryStateMachine,
 
     // Persistent state:
     // -----------------------------------------------------
     current_term: RwLock<usize>,
     voted_for: RwLock<Option<domain::node_id::NodeId>>,
     log: log::ServerLog,
+
+    // Volatile state:
+    // -----------------------------------------------------
+    commit_index: RwLock<usize>,
+    last_applied: RwLock<usize>,
 
     // Cluster configuration:
     // -----------------------------------------------------
@@ -77,12 +83,18 @@ impl Server {
             state,
             state_tx,
             listener,
+            state_machine: state_machine::InMemoryStateMachine::new(),
 
             // Persistent state:
             // -----------------------------------------------------
             current_term: RwLock::new(0),
             voted_for: RwLock::new(None),
             log: Default::default(),
+
+            // Volatile state:
+            // -----------------------------------------------------
+            commit_index: RwLock::new(0),
+            last_applied: RwLock::new(0),
 
             // Cluster configuration:
             // -----------------------------------------------------

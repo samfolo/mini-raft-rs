@@ -1,16 +1,14 @@
-mod command;
-
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
-pub struct StateMachine {
+pub struct InMemoryStateMachine {
     x: i64,
     y: i64,
     z: i64,
 }
 
-impl StateMachine {
-    fn new() -> Self {
+impl InMemoryStateMachine {
+    pub fn new() -> Self {
         Self { x: 0, y: 0, z: 0 }
     }
 
@@ -35,7 +33,7 @@ impl StateMachine {
     }
 }
 
-impl Default for StateMachine {
+impl Default for InMemoryStateMachine {
     fn default() -> Self {
         Self::new()
     }
@@ -100,7 +98,7 @@ pub trait Command {
     fn key(&self) -> StateKey;
     fn value(&self) -> i64;
 
-    fn exec(&self, state_machine: &mut StateMachine) -> anyhow::Result<()> {
+    fn exec(&self, state_machine: &mut InMemoryStateMachine) -> anyhow::Result<()> {
         let new_value = self.op().exec(state_machine.get(self.key()), self.value());
         state_machine.set(self.key(), new_value);
 
@@ -123,10 +121,9 @@ impl fmt::Display for dyn Command {
 #[cfg(test)]
 mod tests {
     use super::{
-        Command,
+        Command, InMemoryStateMachine,
         Op::{self, *},
         StateKey::{self, *},
-        StateMachine,
     };
 
     // ---------------------------------------------
@@ -157,9 +154,9 @@ mod tests {
 
     // ---------------------------------------------
     fn run(
-        mut actual: StateMachine,
+        mut actual: InMemoryStateMachine,
         commands: &[TestCommand],
-        expected: StateMachine,
+        expected: InMemoryStateMachine,
     ) -> anyhow::Result<()> {
         commands
             .iter()
@@ -174,7 +171,7 @@ mod tests {
     #[test]
     fn applies_increment_commands() -> anyhow::Result<()> {
         run(
-            StateMachine { x: 0, y: 0, z: 0 },
+            InMemoryStateMachine { x: 0, y: 0, z: 0 },
             &[
                 command(Increment, X, 5),
                 command(Increment, Z, 15),
@@ -186,7 +183,7 @@ mod tests {
                 command(Increment, Y, 15),
                 command(Increment, Z, 1),
             ],
-            StateMachine {
+            InMemoryStateMachine {
                 x: 10,
                 y: 20,
                 z: 30,
@@ -198,7 +195,7 @@ mod tests {
     #[test]
     fn applies_decrement_commands() -> anyhow::Result<()> {
         run(
-            StateMachine {
+            InMemoryStateMachine {
                 x: 1000,
                 y: 1000,
                 z: 1000,
@@ -215,7 +212,7 @@ mod tests {
                 command(Decrement, Y, 99),
                 command(Decrement, Z, 100),
             ],
-            StateMachine {
+            InMemoryStateMachine {
                 x: 700,
                 y: 1,
                 z: 500,
@@ -227,7 +224,7 @@ mod tests {
     #[test]
     fn applies_replace_commands() -> anyhow::Result<()> {
         run(
-            StateMachine {
+            InMemoryStateMachine {
                 x: 42,
                 y: 42,
                 z: 42,
@@ -239,7 +236,7 @@ mod tests {
                 command(Replace, X, 6),
                 command(Replace, Y, -4),
             ],
-            StateMachine {
+            InMemoryStateMachine {
                 x: 6,
                 y: -4,
                 z: 127,
@@ -251,7 +248,7 @@ mod tests {
     #[test]
     fn applies_mixed_commands() -> anyhow::Result<()> {
         run(
-            StateMachine { x: 0, y: 0, z: 0 },
+            InMemoryStateMachine { x: 0, y: 0, z: 0 },
             &[
                 command(Increment, Y, 2),
                 command(Increment, X, 1),
@@ -262,7 +259,7 @@ mod tests {
                 command(Decrement, Y, 1),
                 command(Decrement, Z, 103),
             ],
-            StateMachine {
+            InMemoryStateMachine {
                 x: -9,
                 y: 15,
                 z: -95,
@@ -274,7 +271,7 @@ mod tests {
     #[test]
     fn applies_commands_without_integer_overflow() -> anyhow::Result<()> {
         run(
-            StateMachine {
+            InMemoryStateMachine {
                 x: i64::MIN,
                 y: i64::MAX,
                 z: 1,
@@ -284,7 +281,7 @@ mod tests {
                 command(Increment, Y, 1),
                 command(Increment, Z, i64::MAX),
             ],
-            StateMachine {
+            InMemoryStateMachine {
                 x: i64::MIN,
                 y: i64::MAX,
                 z: i64::MAX,
