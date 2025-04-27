@@ -6,11 +6,12 @@ use cluster_node::error::ClusterNodeError;
 use server::{Server, ServerState, rpc};
 
 impl Server {
+    // Unsure this works... verify.
     pub(in crate::server) async fn run_election_routine(&self) -> cluster_node::Result<()> {
         let mut state = self.state_tx.subscribe();
 
         loop {
-            if *state.borrow() == ServerState::Candidate {
+            if *state.borrow_and_update() == ServerState::Candidate {
                 'election_loop: loop {
                     self.set_current_term(|prev| prev + 1);
 
@@ -60,7 +61,7 @@ impl Server {
         loop {
             match time::timeout(timeout, response.recv()).await {
                 Ok(Some(res)) => match res.body() {
-                    rpc::ResponseBody::RequestVote { vote_granted } => {
+                    rpc::ServerResponseBody::RequestVote { vote_granted } => {
                         if *vote_granted {
                             naive_logging::log(&self.id, "received vote for this term");
                             total_votes_over_term += 1;
@@ -81,7 +82,7 @@ impl Server {
                             return Err(ClusterNodeError::Unexpected(err.into()));
                         }
                     }
-                    rpc::ResponseBody::AppendEntries { .. } => {
+                    rpc::ServerResponseBody::AppendEntries { .. } => {
                         return Err(ClusterNodeError::Unexpected(anyhow::anyhow!(
                             "invalid response [AppendEntries] to RequestVote RPC"
                         )));

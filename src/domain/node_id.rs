@@ -15,3 +15,9 @@ impl fmt::Display for NodeId {
         write!(f, "[ {}... ]", &id[..11])
     }
 }
+
+impl Default for NodeId {
+    fn default() -> Self {
+        Self::new()
+    }
+}

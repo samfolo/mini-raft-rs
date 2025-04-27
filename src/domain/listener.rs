@@ -1,4 +1,5 @@
-use std::{fmt, net::TcpListener};
+use std::fmt;
+use tokio::net::TcpListener;
 
 use anyhow::bail;
 
@@ -15,8 +16,8 @@ impl PartialEq for Listener {
 }
 
 impl Listener {
-    pub fn bind_random_local_port() -> anyhow::Result<Self> {
-        let listener = match TcpListener::bind("127.0.0.1:0") {
+    pub async fn bind_random_local_port() -> anyhow::Result<Self> {
+        let listener = match TcpListener::bind("127.0.0.1:0").await {
             Ok(l) => l,
             Err(err) => bail!("failed to bind to random port: {err:?}"),
         };

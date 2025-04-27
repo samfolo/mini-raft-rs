@@ -2,15 +2,13 @@ use std::time;
 
 use tokio::sync::{broadcast, watch};
 
-use crate::{cluster_node, domain::listener, server, timeout};
-
-type Publisher = broadcast::Sender<server::ServerRequest>;
-type Subscriber = broadcast::Receiver<server::ServerRequest>;
+use crate::{client, cluster_node, domain::listener, server, timeout};
 
 /// A Raft cluster contains several servers
 pub struct Cluster {
     nodes: cluster_node::ClusterNodeJoinSet,
-    publisher: Publisher,
+    cluster_conn: broadcast::Sender<server::ServerRequest>,
+    client_conn: broadcast::Sender<client::ClientRequest>,
     node_count: u64,
     heartbeat_interval: u64,
     min_election_timeout_ms: u64,
@@ -25,11 +23,17 @@ impl Cluster {
     const DEFAULT_MAX_ELECTION_TIMEOUT_MS: u64 = 300;
 
     pub fn new(buffer_size: usize) -> Self {
-        let (publisher, _) = broadcast::channel(buffer_size);
+        let (cluster_conn, _) = broadcast::channel(buffer_size);
+        let (client_conn, _) = broadcast::channel(buffer_size);
 
         Self {
-            publisher,
-            ..Default::default()
+            cluster_conn,
+            client_conn,
+            nodes: Default::default(),
+            node_count: Self::DEFAULT_NODE_COUNT,
+            heartbeat_interval: Self::DEFAULT_HEARTBEAT_INTERVAL_MS,
+            min_election_timeout_ms: Self::DEFAULT_MIN_ELECTION_TIMEOUT_MS,
+            max_election_timeout_ms: Self::DEFAULT_MAX_ELECTION_TIMEOUT_MS,
         }
     }
 
@@ -52,27 +56,36 @@ impl Cluster {
         self
     }
 
+    pub fn client_conn(&self) -> broadcast::Sender<client::ClientRequest> {
+        self.client_conn.clone()
+    }
+
     async fn register_node<N: cluster_node::ClusterNode + Sync>(
         &mut self,
-        node_init: impl FnOnce(Publisher, Subscriber) -> N,
+        node_init: impl FnOnce(
+            broadcast::Sender<server::ServerRequest>,
+            broadcast::WeakSender<client::ClientRequest>,
+        ) -> N,
     ) -> &mut Self {
-        let publisher = self.publisher.clone();
-        let subscriber = publisher.subscribe();
-        let node = node_init(publisher, subscriber);
+        let cluster_conn = self.cluster_conn.clone();
+        let client_conn = self.client_conn.downgrade();
+
+        let node = node_init(cluster_conn, client_conn);
         self.nodes.spawn(async move { node.run().await });
         self
     }
 
-    pub async fn run(mut self) {
+    pub async fn start(mut self) -> Self {
         let (cluster_node_count_tx, _) = watch::channel::<u64>(self.node_count);
 
         for _ in 0..self.node_count {
             let cluster_node_count = cluster_node_count_tx.subscribe();
-            let listener = listener::Listener::bind_random_local_port().unwrap();
+            let listener = listener::Listener::bind_random_local_port().await.unwrap();
 
-            self.register_node(move |tx, _rx| {
+            self.register_node(move |cluster_conn, client_conn| {
                 server::Server::new(
-                    tx,
+                    cluster_conn,
+                    client_conn,
                     time::Duration::from_millis(self.heartbeat_interval),
                     timeout::TimeoutRange::new(
                         self.min_election_timeout_ms,
@@ -85,6 +98,10 @@ impl Cluster {
             .await;
         }
 
+        self
+    }
+
+    pub async fn run_until_ctrl_c(self) {
         match tokio::signal::ctrl_c().await {
             Ok(_) => self.shutdown().await,
             Err(err) => panic!("{err:?}"),
@@ -98,10 +115,13 @@ impl Cluster {
 
 impl Default for Cluster {
     fn default() -> Self {
-        let (publisher, _subscriber) = broadcast::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
+        let (cluster_conn, _) = broadcast::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
+        let (client_conn, _) = broadcast::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
+
         Self {
             nodes: Default::default(),
-            publisher,
+            cluster_conn,
+            client_conn,
             node_count: Self::DEFAULT_NODE_COUNT,
             heartbeat_interval: Self::DEFAULT_HEARTBEAT_INTERVAL_MS,
             min_election_timeout_ms: Self::DEFAULT_MIN_ELECTION_TIMEOUT_MS,
@@ -121,13 +141,21 @@ mod tests {
     #[allow(unused)]
     struct MockServer {
         id: domain::node_id::NodeId,
-        tx: Publisher,
-        rx: Subscriber,
+        cluster_conn: broadcast::Sender<server::ServerRequest>,
+        client_conn: broadcast::WeakSender<client::ClientRequest>,
     }
 
     impl MockServer {
-        fn new(id: domain::node_id::NodeId, tx: Publisher, rx: Subscriber) -> Self {
-            Self { id, tx, rx }
+        fn new(
+            id: domain::node_id::NodeId,
+            cluster_conn: broadcast::Sender<server::ServerRequest>,
+            client_conn: broadcast::WeakSender<client::ClientRequest>,
+        ) -> Self {
+            Self {
+                id,
+                cluster_conn,
+                client_conn,
+            }
         }
     }
 
@@ -145,16 +173,16 @@ mod tests {
         let server_two_id = domain::node_id::NodeId::new();
 
         test_cluster
-            .register_node(Box::new(move |tx, rx| {
-                MockServer::new(server_one_id.clone(), tx, rx)
+            .register_node(Box::new(move |cluster_conn, client_conn| {
+                MockServer::new(server_one_id.clone(), cluster_conn, client_conn)
             }))
             .await;
 
         assert_eq!(1, test_cluster.nodes.len());
 
         test_cluster
-            .register_node(Box::new(move |tx, rx| {
-                MockServer::new(server_two_id.clone(), tx, rx)
+            .register_node(Box::new(move |cluster_conn, client_conn| {
+                MockServer::new(server_two_id.clone(), cluster_conn, client_conn)
             }))
             .await;
 

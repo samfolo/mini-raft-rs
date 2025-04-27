@@ -1,3 +1,6 @@
+#![allow(unused)] // TODO: use unused... need to refactor something first.
+
+mod log;
 mod routines;
 mod rpc;
 
@@ -9,7 +12,7 @@ use tokio::{
     time,
 };
 
-use crate::{cluster_node, domain, naive_logging, timeout};
+use crate::{client, cluster_node, domain, naive_logging, state_machine, timeout};
 use crate::{cluster_node::error::ClusterNodeError, domain::listener};
 
 /// At any given time each server is in one of three states:
@@ -30,16 +33,24 @@ pub struct Server {
     state: watch::Receiver<ServerState>,
     state_tx: watch::Sender<ServerState>,
     listener: listener::Listener,
+    state_machine: state_machine::InMemoryStateMachine,
 
     // Persistent state:
     // -----------------------------------------------------
     current_term: RwLock<usize>,
     voted_for: RwLock<Option<domain::node_id::NodeId>>,
+    log: log::ServerLog,
+
+    // Volatile state:
+    // -----------------------------------------------------
+    commit_index: RwLock<usize>,
+    last_applied: RwLock<usize>,
 
     // Cluster configuration:
     // -----------------------------------------------------
     cluster_node_count: watch::Receiver<u64>,
-    publisher: broadcast::Sender<rpc::ServerRequest>,
+    cluster_conn: broadcast::Sender<rpc::ServerRequest>,
+    client_conn: broadcast::WeakSender<client::ClientRequest>,
     heartbeat_interval: time::Duration,
     election_timeout_range: timeout::TimeoutRange,
 }
@@ -52,7 +63,8 @@ impl Server {
     const DEFAULT_MESSAGE_BUFFER_SIZE: usize = 32;
 
     pub fn new(
-        publisher: broadcast::Sender<rpc::ServerRequest>,
+        cluster_conn: broadcast::Sender<rpc::ServerRequest>,
+        client_conn: broadcast::WeakSender<client::ClientRequest>,
         heartbeat_interval: time::Duration,
         election_timeout_range: timeout::TimeoutRange,
         cluster_node_count: watch::Receiver<u64>,
@@ -70,16 +82,24 @@ impl Server {
             state,
             state_tx,
             listener,
+            state_machine: state_machine::InMemoryStateMachine::new(),
 
             // Persistent state:
             // -----------------------------------------------------
             current_term: RwLock::new(0),
             voted_for: RwLock::new(None),
+            log: Default::default(),
+
+            // Volatile state:
+            // -----------------------------------------------------
+            commit_index: RwLock::new(0),
+            last_applied: RwLock::new(0),
 
             // Cluster configuration:
             // -----------------------------------------------------
             cluster_node_count,
-            publisher,
+            cluster_conn,
+            client_conn,
             heartbeat_interval,
             election_timeout_range,
         }
@@ -99,6 +119,34 @@ impl Server {
             }
             Err(err) => panic!("failed to modify current_term: {err:?}"),
         };
+    }
+
+    fn commit_index(&self) -> usize {
+        match self.commit_index.read() {
+            Ok(res) => *res,
+            Err(err) => panic!("failed to read commit_index: {err:?}"),
+        }
+    }
+
+    fn set_commit_index(&self, new_index: usize) {
+        match self.commit_index.write() {
+            Ok(mut res) => *res = new_index,
+            Err(err) => panic!("failed to modify commit_index: {err:?}"),
+        }
+    }
+
+    fn last_applied(&self) -> usize {
+        match self.last_applied.read() {
+            Ok(res) => *res,
+            Err(err) => panic!("failed to read last_applied: {err:?}"),
+        }
+    }
+
+    fn set_last_applied(&self, new_index: usize) {
+        match self.last_applied.write() {
+            Ok(mut res) => *res = new_index,
+            Err(err) => panic!("failed to modify last_applied: {err:?}"),
+        }
     }
 
     /// Current terms are exchanged whenever Servers communicate; if
@@ -170,11 +218,8 @@ impl Server {
         };
     }
 
-    /// The leader handles all client requests; if a client contacts a follower, the
-    /// follower redirects it to the leader.
-    #[allow(unused)]
-    async fn handle_client_request(&self, _: ()) -> anyhow::Result<()> {
-        todo!("unimplemented")
+    fn append_to_log(&self, command: state_machine::Command) {
+        self.log.append_cmd(self.current_term(), command);
     }
 }
 
@@ -185,7 +230,8 @@ impl cluster_node::ClusterNode for Server {
         match tokio::try_join!(
             self.run_election_routine(),
             self.run_heartbeat_routine(),
-            self.run_base_routine()
+            self.run_base_routine(),
+            self.handle_client_request()
         ) {
             Ok(res) => {
                 println!("{res:#?}");
@@ -211,15 +257,18 @@ mod tests {
 
     const TEST_CHANNEL_CAPACITY: usize = 16;
 
-    #[test]
-    fn starts() -> anyhow::Result<()> {
-        let (publisher, _subscriber) = broadcast::channel(TEST_CHANNEL_CAPACITY);
+    #[tokio::test]
+    async fn starts() -> anyhow::Result<()> {
+        let (cluster_conn, _) = broadcast::channel(TEST_CHANNEL_CAPACITY);
+        let (client_conn, _) = broadcast::channel(TEST_CHANNEL_CAPACITY);
         let (_, cluster_node_count) = watch::channel(1);
 
-        let listener = listener::Listener::bind_random_local_port().unwrap();
+        let listener = listener::Listener::bind_random_local_port().await?;
+        let client_conn = client_conn.downgrade();
 
         let _ = Server::new(
-            publisher,
+            cluster_conn,
+            client_conn,
             time::Duration::from_millis(5),
             timeout::TimeoutRange::new(10, 20),
             cluster_node_count,
