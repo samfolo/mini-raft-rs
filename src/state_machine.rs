@@ -30,7 +30,7 @@ impl InMemoryStateMachine {
         }
     }
 
-    pub fn apply_command(&mut self, command: &Command) -> anyhow::Result<()> {
+    pub fn apply_command(&mut self, command: &Command) {
         command.exec(self)
     }
 }
@@ -118,11 +118,9 @@ impl Command {
         self.value
     }
 
-    fn exec(&self, state_machine: &mut InMemoryStateMachine) -> anyhow::Result<()> {
+    fn exec(&self, state_machine: &mut InMemoryStateMachine) {
         let new_value = self.op().exec(state_machine.get(self.key()), self.value());
         state_machine.set(self.key(), new_value);
-
-        Ok(())
     }
 }
 
@@ -157,9 +155,7 @@ mod tests {
         commands: &[Command],
         expected: InMemoryStateMachine,
     ) -> anyhow::Result<()> {
-        commands
-            .iter()
-            .try_for_each(|cmd| actual.apply_command(cmd))?;
+        commands.iter().for_each(|cmd| actual.apply_command(cmd));
 
         assert_eq!(expected, actual);
 
