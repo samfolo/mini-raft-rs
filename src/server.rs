@@ -1,3 +1,5 @@
+#![allow(unused)] // TODO: use unused... need to refactor something first.
+
 mod log;
 mod routines;
 mod rpc;
@@ -10,10 +12,7 @@ use tokio::{
     time,
 };
 
-use crate::{
-    client::{self, ClientRequestBody},
-    cluster_node, domain, naive_logging, state_machine, timeout,
-};
+use crate::{client, cluster_node, domain, naive_logging, state_machine, timeout};
 use crate::{cluster_node::error::ClusterNodeError, domain::listener};
 
 /// At any given time each server is in one of three states:
@@ -122,6 +121,34 @@ impl Server {
         };
     }
 
+    fn commit_index(&self) -> usize {
+        match self.commit_index.read() {
+            Ok(res) => *res,
+            Err(err) => panic!("failed to read commit_index: {err:?}"),
+        }
+    }
+
+    fn set_commit_index(&self, new_index: usize) {
+        match self.commit_index.write() {
+            Ok(mut res) => *res = new_index,
+            Err(err) => panic!("failed to modify commit_index: {err:?}"),
+        }
+    }
+
+    fn last_applied(&self) -> usize {
+        match self.last_applied.read() {
+            Ok(res) => *res,
+            Err(err) => panic!("failed to read last_applied: {err:?}"),
+        }
+    }
+
+    fn set_last_applied(&self, new_index: usize) {
+        match self.last_applied.write() {
+            Ok(mut res) => *res = new_index,
+            Err(err) => panic!("failed to modify last_applied: {err:?}"),
+        }
+    }
+
     /// Current terms are exchanged whenever Servers communicate; if
     /// one Server’s current term is smaller than the other’s, then it updates
     /// its current term to the larger value.
@@ -191,7 +218,7 @@ impl Server {
         };
     }
 
-    fn append_to_log(&self, command: ClientRequestBody) {
+    fn append_to_log(&self, command: state_machine::Command) {
         self.log.append_cmd(self.current_term(), command);
     }
 }

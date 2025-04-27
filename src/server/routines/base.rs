@@ -37,7 +37,7 @@ impl Server {
                     match res {
                         Ok(request) => {
                             match request.body() {
-                                rpc::ServerRequestBody::AppendEntries { leader_id, entries } => {
+                                rpc::ServerRequestBody::AppendEntries { leader_id, entries, .. } => {
                                     if self.id != *leader_id {
                                         naive_logging::log(
                                             &self.id,

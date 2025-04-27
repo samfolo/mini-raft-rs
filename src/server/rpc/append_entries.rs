@@ -1,6 +1,7 @@
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 
+use crate::server::log::ServerLogEntry;
 use crate::{naive_logging, server};
 use server::{Server, rpc};
 
@@ -9,7 +10,7 @@ impl Server {
     /// and to provide a form of heartbeat.
     pub(in crate::server) fn append_entries(
         &self,
-        entries: Vec<String>,
+        entries: Vec<ServerLogEntry>,
     ) -> anyhow::Result<
         mpsc::Receiver<rpc::ServerResponse>,
         broadcast::error::SendError<rpc::ServerRequest>,

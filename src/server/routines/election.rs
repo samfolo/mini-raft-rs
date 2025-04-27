@@ -6,6 +6,7 @@ use cluster_node::error::ClusterNodeError;
 use server::{Server, ServerState, rpc};
 
 impl Server {
+    // Unsure this works... verify.
     pub(in crate::server) async fn run_election_routine(&self) -> cluster_node::Result<()> {
         let mut state = self.state_tx.subscribe();
 

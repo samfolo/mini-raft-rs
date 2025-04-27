@@ -3,14 +3,18 @@ mod request;
 pub mod error;
 
 use error::ClientRequestError;
-pub use request::{ClientRequest, ClientRequestBody, ClientResponse, Op, StateKey};
+pub use request::{ClientRequest, ClientResponse};
 
 use tokio::{
     sync::{broadcast, mpsc},
     time,
 };
 
-use crate::{cluster, naive_logging, timeout};
+use crate::{
+    cluster, naive_logging,
+    state_machine::{self, Op, StateKey},
+    timeout,
+};
 
 pub type Result<T> = anyhow::Result<T, error::ClientRequestError>;
 
@@ -79,7 +83,7 @@ impl RandomDataClient {
 
         let op = Self::OPS[rand::random_range(0..3) as usize];
         let state_key = Self::STATE_KEYS[rand::random_range(0..3) as usize];
-        let body = ClientRequestBody::new(op, state_key, rand::random_range(0..=100));
+        let body = state_machine::Command::new(op, state_key, rand::random_range(0..=100));
 
         naive_logging::log(
             &self.id,

@@ -22,7 +22,8 @@ impl Server {
             tokio::select! {
                 _ = &mut timeout => {
                     if *state.borrow_and_update() == ServerState::Leader {
-                        if let Err(err) = self.append_entries(vec![]) {
+
+                        if let Err(err) = self.append_entries(self.log.entries_from(self.commit_index())) {
                             return Err(ClusterNodeError::Heartbeat(self.id, err.into()))
                         }
                     }

@@ -2,22 +2,22 @@ use std::fmt;
 
 use std::sync::RwLock;
 
-use crate::client::{self, ClientRequestBody};
+use crate::state_machine;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ServerLog {
     entries: RwLock<Vec<ServerLogEntry>>,
 }
 
 impl ServerLog {
-    pub fn entries(&self) -> Vec<ServerLogEntry> {
+    pub fn entries_from(&self, index: usize) -> Vec<ServerLogEntry> {
         match self.entries.read() {
-            Ok(entries) => entries.to_vec(),
+            Ok(entries) => entries[index..].to_vec(),
             Err(err) => panic!("failed to read log entries: {err:?}"),
         }
     }
 
-    pub fn append_cmd(&self, term: usize, command: ClientRequestBody) {
+    pub fn append_cmd(&self, term: usize, command: state_machine::Command) {
         match self.entries.write() {
             Ok(mut entries) => {
                 entries.push(ServerLogEntry { term, command });
@@ -30,25 +30,24 @@ impl ServerLog {
 impl fmt::Display for ServerLog {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "[")?;
-        for entry in self.entries() {
+        for entry in self.entries_from(0) {
             writeln!(f, "  {}", entry)?;
         }
         write!(f, "]")
     }
 }
 
-impl Default for ServerLog {
-    fn default() -> Self {
-        Self {
-            entries: Default::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Debug)]
 pub struct ServerLogEntry {
     term: usize,
-    command: client::ClientRequestBody,
+    command: state_machine::Command,
+}
+
+impl ServerLogEntry {
+    #[allow(unused)] // TODO: use... need to refactor something first.
+    pub fn term(&self) -> usize {
+        self.term
+    }
 }
 
 impl fmt::Display for ServerLogEntry {

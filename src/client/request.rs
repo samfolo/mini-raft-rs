@@ -1,86 +1,20 @@
-use std::fmt;
-
 use tokio::sync::mpsc;
 
-/// StateKey represents the location of the target state client request was made to update.
-#[derive(Debug, Clone, Copy)]
-pub enum StateKey {
-    X,
-    Y,
-    Z,
-}
-
-/// Op represents the operation to be taken on the target state.
-#[derive(Debug, Clone, Copy)]
-pub enum Op {
-    Increment,
-    Decrement,
-    Replace,
-}
-
-impl fmt::Display for Op {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Op::Increment => "+=",
-                Op::Decrement => "-=",
-                Op::Replace => "<=",
-            }
-        )
-    }
-}
-
-/// ClientRequestBody represents the body of a ClientRequest.
-#[derive(Debug, Clone, Copy)]
-pub struct ClientRequestBody {
-    op: Op,
-    key: StateKey,
-    value: i64,
-}
-
-impl ClientRequestBody {
-    pub fn new(op: Op, key: StateKey, value: i64) -> Self {
-        Self { op, key, value }
-    }
-
-    pub fn op(&self) -> Op {
-        self.op
-    }
-
-    pub fn key(&self) -> StateKey {
-        self.key
-    }
-
-    pub fn value(&self) -> i64 {
-        self.value
-    }
-}
-
-impl fmt::Display for ClientRequestBody {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{{ command: [ State.{:?} {} {} ] }}",
-            self.key, self.op, self.value
-        )
-    }
-}
+use crate::state_machine;
 
 /// ClientRequest represents a request sent by a Client.
 #[derive(Debug, Clone)]
 pub struct ClientRequest {
     pub responder: mpsc::Sender<ClientResponse>,
-    pub body: ClientRequestBody,
+    pub body: state_machine::Command,
 }
 
 impl ClientRequest {
-    pub fn new(responder: mpsc::Sender<ClientResponse>, body: ClientRequestBody) -> Self {
+    pub fn new(responder: mpsc::Sender<ClientResponse>, body: state_machine::Command) -> Self {
         Self { responder, body }
     }
 
-    pub fn body(&self) -> &ClientRequestBody {
+    pub fn body(&self) -> &state_machine::Command {
         &self.body
     }
 

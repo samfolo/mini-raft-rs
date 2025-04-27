@@ -1,3 +1,5 @@
+#![allow(unused)] // TODO: use... need to refactor something first.
+
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
@@ -28,7 +30,7 @@ impl InMemoryStateMachine {
         }
     }
 
-    pub fn apply_command<T: Command>(&mut self, command: &T) -> anyhow::Result<()> {
+    pub fn apply_command(&mut self, command: &Command) -> anyhow::Result<()> {
         command.exec(self)
     }
 }
@@ -93,10 +95,28 @@ impl fmt::Display for Op {
     }
 }
 
-pub trait Command {
-    fn op(&self) -> Op;
-    fn key(&self) -> StateKey;
-    fn value(&self) -> i64;
+#[derive(Clone, Debug)]
+pub struct Command {
+    op: Op,
+    key: StateKey,
+    value: i64,
+}
+
+impl Command {
+    pub fn new(op: Op, key: StateKey, value: i64) -> Self {
+        Self { op, key, value }
+    }
+
+    fn op(&self) -> Op {
+        self.op
+    }
+    fn key(&self) -> StateKey {
+        self.key
+    }
+
+    fn value(&self) -> i64 {
+        self.value
+    }
 
     fn exec(&self, state_machine: &mut InMemoryStateMachine) -> anyhow::Result<()> {
         let new_value = self.op().exec(state_machine.get(self.key()), self.value());
@@ -106,7 +126,7 @@ pub trait Command {
     }
 }
 
-impl fmt::Display for dyn Command {
+impl fmt::Display for Command {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
@@ -127,35 +147,14 @@ mod tests {
     };
 
     // ---------------------------------------------
-    struct TestCommand {
-        op: Op,
-        key: StateKey,
-        value: i64,
-    }
-
-    impl Command for TestCommand {
-        fn key(&self) -> StateKey {
-            self.key
-        }
-
-        fn op(&self) -> Op {
-            self.op
-        }
-
-        fn value(&self) -> i64 {
-            self.value
-        }
-    }
-
-    // ---------------------------------------------
-    fn command(op: Op, key: StateKey, value: i64) -> TestCommand {
-        TestCommand { op, key, value }
+    fn command(op: Op, key: StateKey, value: i64) -> Command {
+        Command { op, key, value }
     }
 
     // ---------------------------------------------
     fn run(
         mut actual: InMemoryStateMachine,
-        commands: &[TestCommand],
+        commands: &[Command],
         expected: InMemoryStateMachine,
     ) -> anyhow::Result<()> {
         commands

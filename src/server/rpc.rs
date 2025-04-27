@@ -5,14 +5,28 @@ use tokio::sync::mpsc;
 
 use crate::domain;
 
+use super::log::ServerLogEntry;
+
 /// ServerRequestBody represents the body of a ServerRequest.
 #[derive(Clone, Debug)]
 pub enum ServerRequestBody {
     AppendEntries {
+        // so follower can redirect clients
         leader_id: domain::node_id::NodeId,
-        entries: Vec<String>, // try and remove owned string later.
+
+        // // index of log entry immediately preceding new ones
+        // prev_log_index: usize,
+        // // term of prevLogIndex entry
+        // prev_log_term: usize,
+        // // leader’s commitIndex
+        // leader_commit: usize,
+
+        // log entries to store (empty for heartbeat; may send more
+        // than one for efficiency)
+        entries: Vec<ServerLogEntry>,
     },
     RequestVote {
+        // candidate requesting vote
         candidate_id: domain::node_id::NodeId,
     },
 }
