@@ -6,6 +6,13 @@ use crate::{
 use server::{Server, ServerState};
 
 impl Server {
+    ///Once a leader has been elected, it begins servicing client requests. Each client
+    /// request contains a command to be executed by the replicated state machines.
+    ///
+    /// The leader appends the command to its log as a new entry, then issues
+    /// `AppendEntries` RPCs in parallel to each of the other servers to replicate the
+    /// entry.
+    ///
     /// The leader handles all client requests; if a client contacts a follower, the
     /// follower redirects it to the leader.
     pub(in crate::server) async fn handle_client_request(&self) -> cluster_node::Result<()> {
