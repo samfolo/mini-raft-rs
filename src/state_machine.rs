@@ -30,7 +30,7 @@ impl StateMachine {
         }
     }
 
-    fn apply_command<T: Command>(&mut self, command: &T) -> anyhow::Result<()> {
+    pub fn apply_command<T: Command>(&mut self, command: &T) -> anyhow::Result<()> {
         command.exec(self)
     }
 }
@@ -163,7 +163,7 @@ mod tests {
     ) -> anyhow::Result<()> {
         commands
             .iter()
-            .try_for_each(|cmd| actual.apply_command(cmd));
+            .try_for_each(|cmd| actual.apply_command(cmd))?;
 
         assert_eq!(expected, actual);
 
@@ -219,6 +219,75 @@ mod tests {
                 x: 700,
                 y: 1,
                 z: 500,
+            },
+        )
+    }
+
+    // ---------------------------------------------
+    #[test]
+    fn applies_replace_commands() -> anyhow::Result<()> {
+        run(
+            StateMachine {
+                x: 42,
+                y: 42,
+                z: 42,
+            },
+            &[
+                command(Replace, X, 9),
+                command(Replace, Y, 18),
+                command(Replace, Z, 127),
+                command(Replace, X, 6),
+                command(Replace, Y, -4),
+            ],
+            StateMachine {
+                x: 6,
+                y: -4,
+                z: 127,
+            },
+        )
+    }
+
+    // ---------------------------------------------
+    #[test]
+    fn applies_mixed_commands() -> anyhow::Result<()> {
+        run(
+            StateMachine { x: 0, y: 0, z: 0 },
+            &[
+                command(Increment, Y, 2),
+                command(Increment, X, 1),
+                command(Increment, Z, 3),
+                command(Replace, Y, 16),
+                command(Decrement, X, 10),
+                command(Increment, Z, 5),
+                command(Decrement, Y, 1),
+                command(Decrement, Z, 103),
+            ],
+            StateMachine {
+                x: -9,
+                y: 15,
+                z: -95,
+            },
+        )
+    }
+
+    // ---------------------------------------------
+    #[test]
+    fn applies_commands_without_integer_overflow() -> anyhow::Result<()> {
+        run(
+            StateMachine {
+                x: i64::MIN,
+                y: i64::MAX,
+                z: 1,
+            },
+            &[
+                command(Decrement, X, 10),
+                command(Increment, Y, 1),
+                command(Increment, Z, i64::MAX),
+            ],
+            StateMachine {
+                x: i64::MIN,
+                y: i64::MAX,
+                z: i64::MAX,
             },
         )
     }
