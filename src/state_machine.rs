@@ -122,7 +122,12 @@ impl fmt::Display for dyn Command {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        Command,
+        Op::{self, *},
+        StateKey::{self, *},
+        StateMachine,
+    };
 
     // ---------------------------------------------
     struct TestCommand {
@@ -146,8 +151,16 @@ mod tests {
     }
 
     // ---------------------------------------------
-    fn run(commands: &[TestCommand], expected: StateMachine) -> anyhow::Result<()> {
-        let mut actual = StateMachine::default();
+    fn command(op: Op, key: StateKey, value: i64) -> TestCommand {
+        TestCommand { op, key, value }
+    }
+
+    // ---------------------------------------------
+    fn run(
+        mut actual: StateMachine,
+        commands: &[TestCommand],
+        expected: StateMachine,
+    ) -> anyhow::Result<()> {
         commands
             .iter()
             .try_for_each(|cmd| actual.apply_command(cmd));
@@ -158,61 +171,54 @@ mod tests {
     }
 
     // ---------------------------------------------
-
     #[test]
     fn applies_increment_commands() -> anyhow::Result<()> {
         run(
+            StateMachine { x: 0, y: 0, z: 0 },
             &[
-                TestCommand {
-                    op: Op::Increment,
-                    key: StateKey::X,
-                    value: 5,
-                },
-                TestCommand {
-                    op: Op::Increment,
-                    key: StateKey::Z,
-                    value: 15,
-                },
-                TestCommand {
-                    op: Op::Increment,
-                    key: StateKey::X,
-                    value: 5,
-                },
-                TestCommand {
-                    op: Op::Increment,
-                    key: StateKey::Z,
-                    value: 10,
-                },
-                TestCommand {
-                    op: Op::Increment,
-                    key: StateKey::Y,
-                    value: 2,
-                },
-                TestCommand {
-                    op: Op::Increment,
-                    key: StateKey::Z,
-                    value: 4,
-                },
-                TestCommand {
-                    op: Op::Increment,
-                    key: StateKey::Y,
-                    value: 3,
-                },
-                TestCommand {
-                    op: Op::Increment,
-                    key: StateKey::Y,
-                    value: 15,
-                },
-                TestCommand {
-                    op: Op::Increment,
-                    key: StateKey::Z,
-                    value: 1,
-                },
+                command(Increment, X, 5),
+                command(Increment, Z, 15),
+                command(Increment, X, 5),
+                command(Increment, Z, 10),
+                command(Increment, Y, 2),
+                command(Increment, Z, 4),
+                command(Increment, Y, 3),
+                command(Increment, Y, 15),
+                command(Increment, Z, 1),
             ],
             StateMachine {
                 x: 10,
                 y: 20,
                 z: 30,
+            },
+        )
+    }
+
+    // ---------------------------------------------
+    #[test]
+    fn applies_decrement_commands() -> anyhow::Result<()> {
+        run(
+            StateMachine {
+                x: 1000,
+                y: 1000,
+                z: 1000,
+            },
+            &[
+                command(Decrement, X, 125),
+                command(Decrement, Z, 100),
+                command(Decrement, Z, 100),
+                command(Decrement, Y, 900),
+                command(Decrement, Z, 100),
+                command(Decrement, X, 150),
+                command(Decrement, X, 25),
+                command(Decrement, Z, 100),
+                command(Decrement, Y, 99),
+                command(Decrement, Z, 100),
+            ],
+            StateMachine {
+                x: 700,
+                y: 1,
+                z: 500,
             },
         )
     }
