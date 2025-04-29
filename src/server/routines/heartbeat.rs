@@ -26,7 +26,7 @@ impl Server {
                         match self.append_entries(self.log.entries_from(self.commit_index())) {
                             Ok(mut response) => {
                                 while let Some(resp) = response.recv().await {
-                                    println!("GOT {resp:?}");
+                                    println!("GOT res from node ID {}", resp.sender_id());
                                 }
                             },
                             Err(err) => return Err(ClusterNodeError::Heartbeat(self.id, err.into()))

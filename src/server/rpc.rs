@@ -95,6 +95,10 @@ pub struct ServerResponse {
 }
 
 impl ServerResponse {
+    pub fn sender_id(&self) -> node_id::NodeId {
+        self.headers.node_id
+    }
+
     pub fn term(&self) -> usize {
         self.headers.term
     }
