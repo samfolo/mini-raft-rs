@@ -3,7 +3,7 @@ mod request_vote;
 
 use tokio::sync::mpsc;
 
-use crate::domain;
+use crate::domain::{self, node_id};
 
 use super::log::ServerLogEntry;
 
@@ -66,11 +66,18 @@ impl ServerRequest {
 
     pub async fn respond(
         &self,
-        term: usize,
+        headers: ServerResponseHeaders,
         body: ServerResponseBody,
     ) -> Result<(), mpsc::error::SendError<ServerResponse>> {
-        self.responder.send(ServerResponse { term, body }).await
+        self.responder.send(ServerResponse { headers, body }).await
     }
+}
+
+/// ServerResponseBody represents the headers of a ServerResponse
+#[derive(Clone, Debug)]
+pub struct ServerResponseHeaders {
+    pub node_id: node_id::NodeId,
+    pub term: usize,
 }
 
 /// ServerResponseBody represents the body of a ServerResponse
@@ -83,13 +90,13 @@ pub enum ServerResponseBody {
 /// ServerResponse represents a response received from a Server.
 #[derive(Clone, Debug)]
 pub struct ServerResponse {
-    term: usize,
+    headers: ServerResponseHeaders,
     body: ServerResponseBody,
 }
 
 impl ServerResponse {
     pub fn term(&self) -> usize {
-        self.term
+        self.headers.term
     }
 
     pub fn body(&self) -> &ServerResponseBody {

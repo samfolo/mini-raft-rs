@@ -23,8 +23,13 @@ impl Server {
                 _ = &mut timeout => {
                     if *state.borrow_and_update() == ServerState::Leader {
 
-                        if let Err(err) = self.append_entries(self.log.entries_from(self.commit_index())) {
-                            return Err(ClusterNodeError::Heartbeat(self.id, err.into()))
+                        match self.append_entries(self.log.entries_from(self.commit_index())) {
+                            Ok(mut response) => {
+                                while let Some(resp) = response.recv().await {
+                                    println!("GOT {resp:?}");
+                                }
+                            },
+                            Err(err) => return Err(ClusterNodeError::Heartbeat(self.id, err.into()))
                         }
                     }
 

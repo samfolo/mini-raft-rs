@@ -63,9 +63,14 @@ impl Server {
                                             }
                                         }
 
+                                        let headers = rpc::ServerResponseHeaders {
+                                            node_id: self.id,
+                                            term: current_term,
+                                        };
+
                                         if request.can_respond() {
                                             if let Err(err) = request.respond(
-                                                current_term,
+                                                headers,
                                                 rpc::ServerResponseBody::AppendEntries { },
                                             ).await {
                                                 return Err(ClusterNodeError::Unexpected(err.into()));
@@ -102,9 +107,14 @@ impl Server {
                                             naive_logging::log(&self.id, &format!("refusing vote for candidate {candidate_id}: term={current_term}, req_term={}", request.term()));
                                         }
 
+                                        let headers = rpc::ServerResponseHeaders {
+                                            node_id: self.id,
+                                            term: current_term,
+                                        };
+
                                         if request.can_respond() {
                                             if let Err(err) = request.respond(
-                                                current_term,
+                                                headers,
                                                 rpc::ServerResponseBody::RequestVote { vote_granted },
                                             ).await {
                                                 return Err(ClusterNodeError::Unexpected(err.into()));
