@@ -1,5 +1,6 @@
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 
 use crate::server::log::ServerLogEntry;
 use crate::{naive_logging, server};
@@ -10,7 +11,7 @@ impl Server {
     /// and to provide a form of heartbeat.
     pub(in crate::server) fn append_entries(
         &self,
-        responder: mpsc::Sender<rpc::ServerResponse>,
+        responder: oneshot::Sender<rpc::ServerResponse>,
         entries: Vec<ServerLogEntry>,
     ) -> anyhow::Result<(), broadcast::error::SendError<rpc::ServerRequest>> {
         let current_term = self.current_term();

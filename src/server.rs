@@ -1,10 +1,13 @@
 #![allow(unused)] // TODO: use unused... need to refactor something first.
 
+mod handle;
 mod log;
+mod peers;
 mod routines;
 mod rpc;
+mod send;
 
-pub use rpc::ServerRequest;
+pub use rpc::{ServerRequest, ServerResponse};
 
 use std::sync::RwLock;
 use tokio::{
@@ -277,4 +280,22 @@ mod tests {
 
         Ok(())
     }
+
+    // Actor model:
+    // Has a mailbox into which it can ALWAYS receive messages
+    // Has an address book (i.e. is aware of peers)
+    // Can be contacted by an external client
+
+    // When in a leader state:
+    // Sends heartbeat messages in parallel to its peers
+    // Tracks volatile state per-peer, updating it per-heartbeat
+
+    // When in a follower state:
+    // Upgrades to a candidate state after a period of time passes without any messages received
+
+    // When in a candidate state:
+    // Increments its "term" and sends messages in parallel to its peers
+    // Tallies votes each election and anticipates a majority of votes
+    // Restarts election (incremented term, new random timeout) if it does not win the election
+    // Reverts to follower if it receives indication another node has won
 }

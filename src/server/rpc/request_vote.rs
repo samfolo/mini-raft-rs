@@ -1,5 +1,5 @@
 use tokio::sync::broadcast;
-use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 
 use crate::{naive_logging, server};
 use server::{Server, rpc};
@@ -8,10 +8,8 @@ impl Server {
     /// `RequestVote` RPCs are initiated by candidates during elections.
     pub(in crate::server) fn request_vote(
         &self,
-    ) -> anyhow::Result<
-        mpsc::Receiver<rpc::ServerResponse>,
-        broadcast::error::SendError<rpc::ServerRequest>,
-    > {
+        responder: oneshot::Sender<server::ServerResponse>,
+    ) -> anyhow::Result<(), broadcast::error::SendError<rpc::ServerRequest>> {
         let current_term = self.current_term();
 
         naive_logging::log(
@@ -22,8 +20,6 @@ impl Server {
             ),
         );
 
-        let (responder, receiver) = mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
-
         self.cluster_conn.send(rpc::ServerRequest::new(
             current_term,
             responder,
@@ -32,7 +28,7 @@ impl Server {
             },
         ))?;
 
-        Ok(receiver)
+        Ok(())
     }
 }
 

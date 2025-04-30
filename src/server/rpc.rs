@@ -1,9 +1,12 @@
 mod append_entries;
 mod request_vote;
 
-use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 
-use crate::domain::{self, node_id};
+use crate::{
+    domain::{self, node_id},
+    server,
+};
 
 use super::log::ServerLogEntry;
 
@@ -32,17 +35,17 @@ pub enum ServerRequestBody {
 }
 
 /// ServerRequest represents a request sent by a Server.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ServerRequest {
     term: usize,
-    responder: mpsc::Sender<ServerResponse>,
+    responder: oneshot::Sender<server::ServerResponse>,
     body: ServerRequestBody,
 }
 
 impl ServerRequest {
     pub fn new(
         term: usize,
-        responder: mpsc::Sender<ServerResponse>,
+        responder: oneshot::Sender<ServerResponse>,
         body: ServerRequestBody,
     ) -> Self {
         Self {
@@ -64,12 +67,12 @@ impl ServerRequest {
         !self.responder.is_closed()
     }
 
-    pub async fn respond(
-        &self,
+    pub fn respond(
+        self,
         headers: ServerResponseHeaders,
         body: ServerResponseBody,
-    ) -> Result<(), mpsc::error::SendError<ServerResponse>> {
-        self.responder.send(ServerResponse { headers, body }).await
+    ) -> Result<(), ServerResponse> {
+        self.responder.send(ServerResponse { headers, body })
     }
 }
 
