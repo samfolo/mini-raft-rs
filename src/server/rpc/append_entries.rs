@@ -10,26 +10,21 @@ impl Server {
     /// and to provide a form of heartbeat.
     pub(in crate::server) fn append_entries(
         &self,
+        responder: mpsc::Sender<rpc::ServerResponse>,
         entries: Vec<ServerLogEntry>,
-    ) -> anyhow::Result<
-        mpsc::Receiver<rpc::ServerResponse>,
-        broadcast::error::SendError<rpc::ServerRequest>,
-    > {
+    ) -> anyhow::Result<(), broadcast::error::SendError<rpc::ServerRequest>> {
+        let current_term = self.current_term();
+
         naive_logging::log(
             &self.id,
             &format!(
                 "{} -> APPEND_ENTRIES {{ term: {}, leader_id: {}, entries: {:?} }}",
-                self.listener,
-                self.current_term(),
-                self.id,
-                entries
+                self.listener, current_term, self.id, entries
             ),
         );
 
-        let (responder, receiver) = mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
-
         self.cluster_conn.send(rpc::ServerRequest::new(
-            self.current_term(),
+            current_term,
             responder,
             rpc::ServerRequestBody::AppendEntries {
                 leader_id: self.id,
@@ -37,7 +32,7 @@ impl Server {
             },
         ))?;
 
-        Ok(receiver)
+        Ok(())
     }
 }
 
