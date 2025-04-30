@@ -4,7 +4,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::{domain::node_id, naive_logging, server};
 
-use super::{ServerRequest, rpc};
+use super::{ServerRequest, log, rpc};
 
 #[derive(Clone)]
 pub struct ServerHandle {
@@ -36,6 +36,34 @@ impl ServerHandle {
                 current_term,
                 responder,
                 rpc::ServerRequestBody::RequestVote { candidate_id },
+            ))
+            .await?;
+
+        Ok(())
+    }
+
+    /// `AppendEntries` RPCs are initiated by leaders to replicate log entries
+    /// and to provide a form of heartbeat.
+    pub async fn append_entries(
+        &self,
+        leader_id: node_id::NodeId,
+        current_term: usize,
+        entries: Vec<log::ServerLogEntry>,
+        responder: oneshot::Sender<server::ServerResponse>,
+    ) -> anyhow::Result<(), mpsc::error::SendError<rpc::ServerRequest>> {
+        naive_logging::log(
+            &leader_id,
+            &format!(
+                "-> APPEND_ENTRIES {{ term: {}, leader_id: {}, entries: {:#?} }}",
+                current_term, leader_id, entries
+            ),
+        );
+
+        self.sender
+            .send(rpc::ServerRequest::new(
+                current_term,
+                responder,
+                rpc::ServerRequestBody::AppendEntries { leader_id, entries },
             ))
             .await?;
 
