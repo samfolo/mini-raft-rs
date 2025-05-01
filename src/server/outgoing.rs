@@ -26,6 +26,7 @@ impl OutgoingMessageBroker {
                 tokio::spawn(async move {
                     loop {
                         println!("SPAWNED PROCESS FOR ID: {id_clone}");
+                        handle.append_entries(id_clone, 1, vec![]).await?;
                         time::sleep(Duration::from_millis(1000)).await;
                     }
 
