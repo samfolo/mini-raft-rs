@@ -2,16 +2,19 @@
 
 mod handle;
 mod log;
-mod peers;
+mod outgoing;
 mod routines;
 mod rpc;
 mod send;
 
-pub use rpc::{ServerRequest, ServerResponse};
+pub use rpc::{ServerMessage, ServerMessagePayload, ServerRequest, ServerResponse};
+
+pub use handle::ServerHandle; // REMOVE
+pub use outgoing::OutgoingMessageBroker; // REMOVE
 
 use std::sync::RwLock;
 use tokio::{
-    sync::{broadcast, watch},
+    sync::{broadcast, mpsc, watch},
     time,
 };
 
@@ -52,7 +55,7 @@ pub struct Server {
     // Cluster configuration:
     // -----------------------------------------------------
     cluster_node_count: watch::Receiver<u64>,
-    cluster_conn: broadcast::Sender<rpc::ServerRequest>,
+    cluster_conn: mpsc::Sender<rpc::ServerRequest>,
     client_conn: broadcast::WeakSender<client::ClientRequest>,
     heartbeat_interval: time::Duration,
     election_timeout_range: timeout::TimeoutRange,
@@ -66,7 +69,7 @@ impl Server {
     const DEFAULT_MESSAGE_BUFFER_SIZE: usize = 32;
 
     pub fn new(
-        cluster_conn: broadcast::Sender<rpc::ServerRequest>,
+        cluster_conn: mpsc::Sender<rpc::ServerRequest>,
         client_conn: broadcast::WeakSender<client::ClientRequest>,
         heartbeat_interval: time::Duration,
         election_timeout_range: timeout::TimeoutRange,
@@ -230,19 +233,19 @@ impl cluster_node::ClusterNode for Server {
     async fn run(&self) -> Result<domain::node_id::NodeId, ClusterNodeError> {
         naive_logging::log(&self.id, "running...");
 
-        match tokio::try_join!(
-            self.run_election_routine(),
-            self.run_heartbeat_routine(),
-            self.run_base_routine(),
-            self.handle_client_request()
-        ) {
-            Ok(res) => {
-                println!("{res:#?}");
-            }
-            Err(err) => {
-                println!("{err:#?}");
-            }
-        }
+        // match tokio::try_join!(
+        //     self.run_election_routine(),
+        //     self.run_heartbeat_routine(),
+        //     self.run_base_routine(),
+        //     self.handle_client_request()
+        // ) {
+        //     Ok(res) => {
+        //         println!("{res:#?}");
+        //     }
+        //     Err(err) => {
+        //         println!("{err:#?}");
+        //     }
+        // }
 
         Ok(self.id)
     }
@@ -256,13 +259,15 @@ impl Drop for Server {
 
 #[cfg(test)]
 mod tests {
+    use tokio::sync::mpsc;
+
     use super::*;
 
     const TEST_CHANNEL_CAPACITY: usize = 16;
 
     #[tokio::test]
     async fn starts() -> anyhow::Result<()> {
-        let (cluster_conn, _) = broadcast::channel(TEST_CHANNEL_CAPACITY);
+        let (cluster_conn, _) = mpsc::channel(TEST_CHANNEL_CAPACITY);
         let (client_conn, _) = broadcast::channel(TEST_CHANNEL_CAPACITY);
         let (_, cluster_node_count) = watch::channel(1);
 

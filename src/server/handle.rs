@@ -4,15 +4,15 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::{domain::node_id, naive_logging, server};
 
-use super::{ServerRequest, log, rpc};
+use super::{ServerMessage, ServerRequest, log, rpc};
 
 #[derive(Clone)]
 pub struct ServerHandle {
-    sender: mpsc::Sender<ServerRequest>,
+    sender: mpsc::Sender<ServerMessage>,
 }
 
 impl ServerHandle {
-    pub fn new(sender: mpsc::Sender<ServerRequest>) -> Self {
+    pub fn new(sender: mpsc::Sender<ServerMessage>) -> Self {
         Self { sender }
     }
 
@@ -21,8 +21,7 @@ impl ServerHandle {
         &self,
         candidate_id: node_id::NodeId,
         current_term: usize,
-        responder: oneshot::Sender<server::ServerResponse>,
-    ) -> anyhow::Result<(), mpsc::error::SendError<server::ServerRequest>> {
+    ) -> anyhow::Result<(), mpsc::error::SendError<server::ServerMessage>> {
         naive_logging::log(
             &candidate_id,
             &format!(
@@ -32,11 +31,16 @@ impl ServerHandle {
         );
 
         self.sender
-            .send(rpc::ServerRequest::new(
-                current_term,
-                responder,
-                rpc::ServerRequestBody::RequestVote { candidate_id },
-            ))
+            .send(
+                rpc::ServerRequest::new(
+                    rpc::ServerRequestHeaders {
+                        term: current_term,
+                        node_id: candidate_id,
+                    },
+                    rpc::ServerRequestBody::RequestVote { candidate_id },
+                )
+                .into(),
+            )
             .await?;
 
         Ok(())
@@ -49,8 +53,7 @@ impl ServerHandle {
         leader_id: node_id::NodeId,
         current_term: usize,
         entries: Vec<log::ServerLogEntry>,
-        responder: oneshot::Sender<server::ServerResponse>,
-    ) -> anyhow::Result<(), mpsc::error::SendError<rpc::ServerRequest>> {
+    ) -> anyhow::Result<(), mpsc::error::SendError<rpc::ServerMessage>> {
         naive_logging::log(
             &leader_id,
             &format!(
@@ -60,11 +63,16 @@ impl ServerHandle {
         );
 
         self.sender
-            .send(rpc::ServerRequest::new(
-                current_term,
-                responder,
-                rpc::ServerRequestBody::AppendEntries { leader_id, entries },
-            ))
+            .send(
+                rpc::ServerRequest::new(
+                    rpc::ServerRequestHeaders {
+                        term: current_term,
+                        node_id: leader_id,
+                    },
+                    rpc::ServerRequestBody::AppendEntries { leader_id, entries },
+                )
+                .into(),
+            )
             .await?;
 
         Ok(())

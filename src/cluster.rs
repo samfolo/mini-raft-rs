@@ -1,13 +1,13 @@
 use std::time;
 
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::{client, cluster_node, domain::listener, server, timeout};
 
 /// A Raft cluster contains several servers
 pub struct Cluster {
     nodes: cluster_node::ClusterNodeJoinSet,
-    cluster_conn: broadcast::Sender<server::ServerRequest>,
+    cluster_conn: mpsc::Sender<server::ServerRequest>,
     client_conn: broadcast::Sender<client::ClientRequest>,
     node_count: u64,
     heartbeat_interval: u64,
@@ -23,7 +23,7 @@ impl Cluster {
     const DEFAULT_MAX_ELECTION_TIMEOUT_MS: u64 = 300;
 
     pub fn new(buffer_size: usize) -> Self {
-        let (cluster_conn, _) = broadcast::channel(buffer_size);
+        let (cluster_conn, _) = mpsc::channel(buffer_size);
         let (client_conn, _) = broadcast::channel(buffer_size);
 
         Self {
@@ -63,7 +63,7 @@ impl Cluster {
     async fn register_node<N: cluster_node::ClusterNode + Sync>(
         &mut self,
         node_init: impl FnOnce(
-            broadcast::Sender<server::ServerRequest>,
+            mpsc::Sender<server::ServerRequest>,
             broadcast::WeakSender<client::ClientRequest>,
         ) -> N,
     ) -> &mut Self {
@@ -115,7 +115,7 @@ impl Cluster {
 
 impl Default for Cluster {
     fn default() -> Self {
-        let (cluster_conn, _) = broadcast::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
+        let (cluster_conn, _) = mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
         let (client_conn, _) = broadcast::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
 
         Self {
@@ -141,14 +141,14 @@ mod tests {
     #[allow(unused)]
     struct MockServer {
         id: domain::node_id::NodeId,
-        cluster_conn: broadcast::Sender<server::ServerRequest>,
+        cluster_conn: mpsc::Sender<server::ServerRequest>,
         client_conn: broadcast::WeakSender<client::ClientRequest>,
     }
 
     impl MockServer {
         fn new(
             id: domain::node_id::NodeId,
-            cluster_conn: broadcast::Sender<server::ServerRequest>,
+            cluster_conn: mpsc::Sender<server::ServerRequest>,
             client_conn: broadcast::WeakSender<client::ClientRequest>,
         ) -> Self {
             Self {

@@ -1,6 +1,8 @@
 mod append_entries;
 mod request_vote;
 
+use std::fmt;
+
 use tokio::sync::oneshot;
 
 use crate::{
@@ -9,6 +11,21 @@ use crate::{
 };
 
 use super::log::ServerLogEntry;
+
+pub trait ServerMessagePayload<Body: Clone + fmt::Debug> {
+    fn sender_id(&self) -> node_id::NodeId;
+
+    fn term(&self) -> usize;
+
+    fn body(&self) -> &Body;
+}
+
+/// ServerRequestHeaders represents the headers of a ServerRequest
+#[derive(Clone, Debug)]
+pub struct ServerRequestHeaders {
+    pub node_id: node_id::NodeId,
+    pub term: usize,
+}
 
 /// ServerRequestBody represents the body of a ServerRequest.
 #[derive(Clone, Debug)]
@@ -35,48 +52,33 @@ pub enum ServerRequestBody {
 }
 
 /// ServerRequest represents a request sent by a Server.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ServerRequest {
-    term: usize,
-    responder: oneshot::Sender<server::ServerResponse>,
+    headers: ServerRequestHeaders,
     body: ServerRequestBody,
 }
 
 impl ServerRequest {
-    pub fn new(
-        term: usize,
-        responder: oneshot::Sender<ServerResponse>,
-        body: ServerRequestBody,
-    ) -> Self {
-        Self {
-            term,
-            responder,
-            body,
-        }
-    }
-
-    pub fn term(&self) -> usize {
-        self.term
-    }
-
-    pub fn body(&self) -> &ServerRequestBody {
-        &self.body
-    }
-
-    pub fn can_respond(&self) -> bool {
-        !self.responder.is_closed()
-    }
-
-    pub fn respond(
-        self,
-        headers: ServerResponseHeaders,
-        body: ServerResponseBody,
-    ) -> Result<(), ServerResponse> {
-        self.responder.send(ServerResponse { headers, body })
+    pub fn new(headers: ServerRequestHeaders, body: ServerRequestBody) -> Self {
+        Self { headers, body }
     }
 }
 
-/// ServerResponseBody represents the headers of a ServerResponse
+impl ServerMessagePayload<ServerRequestBody> for ServerRequest {
+    fn sender_id(&self) -> node_id::NodeId {
+        self.headers.node_id
+    }
+
+    fn term(&self) -> usize {
+        self.headers.term
+    }
+
+    fn body(&self) -> &ServerRequestBody {
+        &self.body
+    }
+}
+
+/// ServerResponseHeaders represents the headers of a ServerResponse
 #[derive(Clone, Debug)]
 pub struct ServerResponseHeaders {
     pub node_id: node_id::NodeId,
@@ -98,15 +100,50 @@ pub struct ServerResponse {
 }
 
 impl ServerResponse {
-    pub fn sender_id(&self) -> node_id::NodeId {
+    pub fn new(headers: ServerResponseHeaders, body: ServerResponseBody) -> Self {
+        Self { headers, body }
+    }
+}
+
+impl ServerMessagePayload<ServerResponseBody> for ServerResponse {
+    fn sender_id(&self) -> node_id::NodeId {
         self.headers.node_id
     }
 
-    pub fn term(&self) -> usize {
+    fn term(&self) -> usize {
         self.headers.term
     }
 
-    pub fn body(&self) -> &ServerResponseBody {
+    fn body(&self) -> &ServerResponseBody {
         &self.body
+    }
+}
+
+/// ServerMessage represents a message sent from or received by a Server.
+#[derive(Clone, Debug)]
+pub enum ServerMessage {
+    Request(ServerRequest),
+    Response(ServerResponse),
+}
+
+impl ServerMessage {
+    pub fn request(req: ServerRequest) -> Self {
+        Self::Request(req)
+    }
+
+    pub fn response(res: ServerResponse) -> Self {
+        Self::Response(res)
+    }
+}
+
+impl From<ServerRequest> for ServerMessage {
+    fn from(req: ServerRequest) -> Self {
+        Self::Request(req)
+    }
+}
+
+impl From<ServerResponse> for ServerMessage {
+    fn from(res: ServerResponse) -> Self {
+        Self::Response(res)
     }
 }
