@@ -2,17 +2,17 @@ use std::collections::HashMap;
 
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{domain::node_id, naive_logging, server};
+use crate::{client, domain::node_id, message, naive_logging, server, state_machine};
 
-use super::{ServerMessage, ServerRequest, log, rpc};
+use super::{ServerRequest, log, request};
 
 #[derive(Clone)]
 pub struct ServerHandle {
-    sender: mpsc::Sender<ServerMessage>,
+    sender: mpsc::Sender<message::Message>,
 }
 
 impl ServerHandle {
-    pub fn new(sender: mpsc::Sender<ServerMessage>) -> Self {
+    pub fn new(sender: mpsc::Sender<message::Message>) -> Self {
         Self { sender }
     }
 
@@ -21,7 +21,7 @@ impl ServerHandle {
         &self,
         candidate_id: node_id::NodeId,
         current_term: usize,
-    ) -> anyhow::Result<(), mpsc::error::SendError<server::ServerMessage>> {
+    ) -> anyhow::Result<(), mpsc::error::SendError<message::Message>> {
         naive_logging::log(
             &candidate_id,
             &format!(
@@ -32,12 +32,12 @@ impl ServerHandle {
 
         self.sender
             .send(
-                rpc::ServerRequest::new(
-                    rpc::ServerRequestHeaders {
+                request::ServerRequest::new(
+                    request::ServerRequestHeaders {
                         term: current_term,
                         node_id: candidate_id,
                     },
-                    rpc::ServerRequestBody::RequestVote { candidate_id },
+                    request::ServerRequestBody::RequestVote { candidate_id },
                 )
                 .into(),
             )
@@ -53,7 +53,7 @@ impl ServerHandle {
         leader_id: node_id::NodeId,
         current_term: usize,
         entries: Vec<log::ServerLogEntry>,
-    ) -> anyhow::Result<(), mpsc::error::SendError<rpc::ServerMessage>> {
+    ) -> anyhow::Result<(), mpsc::error::SendError<message::Message>> {
         naive_logging::log(
             &leader_id,
             &format!(
@@ -64,15 +64,33 @@ impl ServerHandle {
 
         self.sender
             .send(
-                rpc::ServerRequest::new(
-                    rpc::ServerRequestHeaders {
+                request::ServerRequest::new(
+                    request::ServerRequestHeaders {
                         term: current_term,
                         node_id: leader_id,
                     },
-                    rpc::ServerRequestBody::AppendEntries { leader_id, entries },
+                    request::ServerRequestBody::AppendEntries { leader_id, entries },
                 )
                 .into(),
             )
+            .await?;
+
+        Ok(())
+    }
+
+    /// ...
+    pub async fn handle_client_request(
+        &self,
+        client_id: String,
+        body: state_machine::Command,
+    ) -> anyhow::Result<(), mpsc::error::SendError<message::Message>> {
+        naive_logging::log(
+            &client_id,
+            &format!("-> CLIENT_REQUEST {{ body: {} }}", body),
+        );
+
+        self.sender
+            .send(client::ClientRequest::new(body).into())
             .await?;
 
         Ok(())

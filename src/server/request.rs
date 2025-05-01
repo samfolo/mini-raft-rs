@@ -1,17 +1,11 @@
-mod append_entries;
-mod request_vote;
-
 use std::fmt;
-
-use tokio::sync::oneshot;
 
 use crate::{
     domain::{self, node_id},
     server,
 };
 
-use super::log::ServerLogEntry;
-
+/// ServerMessagePayload represents the methods available on the payload of a server-specific Message
 pub trait ServerMessagePayload<Body: Clone + fmt::Debug> {
     fn sender_id(&self) -> node_id::NodeId;
 
@@ -34,16 +28,9 @@ pub enum ServerRequestBody {
         // so follower can redirect clients
         leader_id: domain::node_id::NodeId,
 
-        // // index of log entry immediately preceding new ones
-        // prev_log_index: usize,
-        // // term of prevLogIndex entry
-        // prev_log_term: usize,
-        // // leader’s commitIndex
-        // leader_commit: usize,
-
         // log entries to store (empty for heartbeat; may send more
         // than one for efficiency)
-        entries: Vec<ServerLogEntry>,
+        entries: Vec<server::ServerLogEntry>,
     },
     RequestVote {
         // candidate requesting vote
@@ -116,34 +103,5 @@ impl ServerMessagePayload<ServerResponseBody> for ServerResponse {
 
     fn body(&self) -> &ServerResponseBody {
         &self.body
-    }
-}
-
-/// ServerMessage represents a message sent from or received by a Server.
-#[derive(Clone, Debug)]
-pub enum ServerMessage {
-    Request(ServerRequest),
-    Response(ServerResponse),
-}
-
-impl ServerMessage {
-    pub fn request(req: ServerRequest) -> Self {
-        Self::Request(req)
-    }
-
-    pub fn response(res: ServerResponse) -> Self {
-        Self::Response(res)
-    }
-}
-
-impl From<ServerRequest> for ServerMessage {
-    fn from(req: ServerRequest) -> Self {
-        Self::Request(req)
-    }
-}
-
-impl From<ServerResponse> for ServerMessage {
-    fn from(res: ServerResponse) -> Self {
-        Self::Response(res)
     }
 }
