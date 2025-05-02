@@ -50,6 +50,7 @@ pub struct Server {
 
     // Persistent state:
     // -----------------------------------------------------
+    current_term: usize,
 
     // Volatile state:
     // -----------------------------------------------------
@@ -84,6 +85,7 @@ impl Server {
 
             // Persistent state:
             // -----------------------------------------------------
+            current_term: 0,
 
             // Volatile state:
             // -----------------------------------------------------
@@ -98,6 +100,10 @@ impl Server {
 
     pub fn generate_random_timeout(&self) -> time::Duration {
         self.election_timeout_range.random()
+    }
+
+    pub fn current_term(&self) -> usize {
+        self.current_term
     }
 
     /// If a candidate or leader discovers that its term is out of date, it

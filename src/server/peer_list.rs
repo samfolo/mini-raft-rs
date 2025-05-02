@@ -1,6 +1,10 @@
 use std::{collections::HashMap, time::Duration};
 
-use tokio::{sync::mpsc, task::JoinHandle, time};
+use tokio::{
+    sync::mpsc,
+    task::{JoinHandle, JoinSet},
+    time,
+};
 
 use crate::domain::node_id;
 
@@ -34,6 +38,31 @@ impl ServerPeerList {
         let ids: Vec<_> = self.peer_list.keys().collect();
         let id = ids[random_index];
         (id.clone(), self.peer_list.get(id).unwrap().clone())
+    }
+
+    pub fn peers_iter(
+        &self,
+    ) -> std::collections::hash_map::IntoIter<node_id::NodeId, ServerHandle> {
+        self.peer_list.clone().into_iter()
+    }
+
+    pub async fn broadcast<F, T>(
+        &self,
+        action: impl Fn(node_id::NodeId, ServerHandle) -> F,
+    ) -> JoinSet<anyhow::Result<T>>
+    where
+        F: Future<Output = anyhow::Result<T>> + Send + 'static,
+        T: Send + 'static,
+    {
+        let mut join_set = JoinSet::new();
+
+        for (id, handle) in &self.peer_list {
+            let id = id.clone();
+            let handle = handle.clone();
+            join_set.spawn(action(id, handle));
+        }
+
+        join_set
     }
 }
 
