@@ -1,5 +1,12 @@
 use crate::state_machine;
 
+/// Message represents a message sent from or received by a Client.
+#[derive(Clone, Debug)]
+pub enum Message {
+    Request(ClientRequest),
+    Response(ClientResponse),
+}
+
 /// ClientRequest represents a request sent by a Client.
 #[derive(Debug, Clone)]
 pub struct ClientRequest {

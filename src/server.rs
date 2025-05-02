@@ -11,8 +11,8 @@ pub use handle::ServerHandle;
 pub use log::ServerLogEntry;
 pub use peer_list::ServerPeerList;
 pub use request::{
-    ServerRequest, ServerRequestBody, ServerRequestHeaders, ServerResponse, ServerResponseBody,
-    ServerResponseHeaders,
+    Message, ServerRequest, ServerRequestBody, ServerRequestHeaders, ServerResponse,
+    ServerResponseBody, ServerResponseHeaders,
 };
 
 use futures_util::StreamExt;
@@ -96,6 +96,10 @@ impl Server {
         }
     }
 
+    pub fn generate_random_timeout(&self) -> time::Duration {
+        self.election_timeout_range.random()
+    }
+
     /// If a candidate or leader discovers that its term is out of date, it
     /// immediately reverts to follower state.
     fn downgrade_to_follower(&self) -> Result<(), watch::error::SendError<ServerState>> {
@@ -153,8 +157,10 @@ impl Server {
         // TEST THIS
         cancellation_token.drop_guard();
 
+        let (follower_tx, follower_rx) = mpsc::channel(32);
         tokio::join!(actors::run_follower_actor(
             self,
+            follower_rx,
             follower_cancellation_token
         ));
 

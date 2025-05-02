@@ -3,7 +3,7 @@ mod request;
 pub mod error;
 
 use error::ClientRequestError;
-pub use request::{ClientRequest, ClientResponse};
+pub use request::{ClientRequest, ClientResponse, Message};
 
 use tokio::time;
 

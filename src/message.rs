@@ -1,34 +1,32 @@
 use crate::{client, server};
 
-/// Message represents a message sent from or received by a Server.
+/// Message represents a message sent from or received by an actor.
 #[derive(Clone, Debug)]
 pub enum Message {
-    ClientRequest(client::ClientRequest),
-    ClientResponse(client::ClientResponse),
-    ServerRequest(server::ServerRequest),
-    ServerResponse(server::ServerResponse),
+    Client(client::Message),
+    Server(server::Message),
 }
 
 impl From<client::ClientRequest> for Message {
     fn from(req: client::ClientRequest) -> Self {
-        Self::ClientRequest(req)
+        Self::Client(client::Message::Request(req))
     }
 }
 
 impl From<client::ClientResponse> for Message {
     fn from(res: client::ClientResponse) -> Self {
-        Self::ClientResponse(res)
+        Self::Client(client::Message::Response(res))
     }
 }
 
 impl From<server::ServerRequest> for Message {
     fn from(req: server::ServerRequest) -> Self {
-        Self::ServerRequest(req)
+        Self::Server(server::Message::Request(req))
     }
 }
 
 impl From<server::ServerResponse> for Message {
     fn from(res: server::ServerResponse) -> Self {
-        Self::ServerResponse(res)
+        Self::Server(server::Message::Response(res))
     }
 }

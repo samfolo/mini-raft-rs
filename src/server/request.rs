@@ -5,6 +5,13 @@ use crate::{
     server,
 };
 
+/// Message represents a message sent from or received by a Server.
+#[derive(Clone, Debug)]
+pub enum Message {
+    Request(ServerRequest),
+    Response(ServerResponse),
+}
+
 /// ServerMessagePayload represents the methods available on the payload of a server-specific Message
 pub trait ServerMessagePayload<Body: Clone + fmt::Debug> {
     fn sender_id(&self) -> node_id::NodeId;

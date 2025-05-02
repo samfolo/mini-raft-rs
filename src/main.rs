@@ -11,11 +11,11 @@ async fn main() -> anyhow::Result<()> {
     let id4 = node_id::NodeId::new();
     let id5 = node_id::NodeId::new();
 
-    let (tx1, mut rx1) = mpsc::channel(8);
-    let (tx2, mut rx2) = mpsc::channel(8);
-    let (tx3, mut rx3) = mpsc::channel(8);
-    let (tx4, mut rx4) = mpsc::channel(8);
-    let (tx5, mut rx5) = mpsc::channel(8);
+    let (tx1, rx1) = mpsc::channel(8);
+    let (tx2, rx2) = mpsc::channel(8);
+    let (tx3, rx3) = mpsc::channel(8);
+    let (tx4, rx4) = mpsc::channel(8);
+    let (tx5, rx5) = mpsc::channel(8);
 
     let mut init = HashMap::new();
     init.insert(id1.clone(), server::ServerHandle::new(tx1));
