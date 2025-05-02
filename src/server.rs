@@ -23,7 +23,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::domain::listener;
+use crate::domain::{listener, node_id};
 use crate::{
     client, domain, message, naive_logging, state_machine,
     timeout::{self, TimeoutRange},
@@ -69,9 +69,9 @@ pub struct Server {
 impl Server {
     const DEFAULT_MESSAGE_BUFFER_SIZE: usize = 32;
 
-    pub fn new(peer_list: peer_list::ServerPeerList) -> Self {
-        let id = domain::node_id::NodeId::new();
+    pub fn new(id: node_id::NodeId, mut peer_list: peer_list::ServerPeerList) -> Self {
         naive_logging::log(&id, "initialised.");
+        peer_list.remove(&id);
 
         let (state_tx, state) = watch::channel(ServerState::Follower);
 
@@ -92,8 +92,8 @@ impl Server {
 
             // Cluster configuration:
             // -----------------------------------------------------
-            heartbeat_interval: time::Duration::from_millis(500),
-            election_timeout_range: TimeoutRange::new(500, 1000),
+            heartbeat_interval: time::Duration::from_millis(374),
+            election_timeout_range: TimeoutRange::new(750, 1000),
             peer_list,
         }
     }
@@ -159,19 +159,18 @@ impl Server {
 
         let cancellation_token = CancellationToken::new();
         let follower_cancellation_token = cancellation_token.clone();
-
-        // TEST THIS
-        cancellation_token.drop_guard();
+        let candidate_cancellation_token = cancellation_token.clone();
 
         let (follower_tx, follower_rx) = mpsc::channel(32);
-        tokio::join!(actors::run_follower_actor(
-            self,
-            follower_rx,
-            follower_cancellation_token
-        ));
+        let (candidate_tx, candidate_rx) = mpsc::channel(32);
+        tokio::join!(
+            actors::run_follower_actor(self, follower_rx, follower_cancellation_token),
+            actors::run_candidate_actor(self, candidate_rx, candidate_cancellation_token)
+        );
 
+        // need to pass this into the join so it can forward messages to the right actor...
         while let Some(message) = stream.next().await {
-            println!("{message:?}");
+            println!("GOT: {message:?}");
         }
 
         Ok(self.id)

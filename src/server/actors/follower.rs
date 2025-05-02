@@ -37,27 +37,33 @@ pub async fn run_follower_actor(
             // If message, reset the random timeout
             // else upgrade to candidate
             tokio::select! {
-              _ = &mut timeout => {}
-              msg = &mut recv => {
-                reset_timeout(&mut timeout);
+              _ = &mut timeout => {
+                if let Err(err) = server.upgrade_to_candidate() {
+                  bail!("failed to upgrade to candidate: {err:?}");
+                }
               }
-              _ = &mut cancelled => {
-                return Ok(())
+              msg = &mut recv => {
+                reset_timeout(&mut timeout); // this might be an internal channel...
               }
               res = state_changed => {
                 if let Err(err) = res {
                   bail!("{:?}", err);
                 }
-              },
+              }
+              _ = &mut cancelled => {
+                return Ok(())
+              }
             }
         } else {
             let mut state_changed = state.changed();
 
             tokio::select! {
-              Err(err) = state_changed => {
-                bail!("{:?}", err);
+              res = state_changed => {
+                if let Err(err) = res {
+                  bail!("{:?}", err);
+                }
               }
-              _ = cancelled => {
+              _ = &mut cancelled => {
                 return Ok(())
               }
             }

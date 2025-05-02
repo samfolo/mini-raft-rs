@@ -65,10 +65,12 @@ pub async fn run_candidate_actor(
             let mut state_changed = state.changed();
 
             tokio::select! {
-              Err(err) = state_changed => {
-                bail!("{:?}", err);
+              res = state_changed => {
+                if let Err(err) = res {
+                  bail!("{:?}", err);
+                }
               }
-              _ = cancelled => {
+              _ = &mut cancelled => {
                 return Ok(())
               }
             }

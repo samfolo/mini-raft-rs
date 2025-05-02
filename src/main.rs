@@ -26,11 +26,11 @@ async fn main() -> anyhow::Result<()> {
 
     let peer_list = server::ServerPeerList::from(init);
 
-    let server1 = server::Server::new(peer_list.clone());
-    let server2 = server::Server::new(peer_list.clone());
-    let server3 = server::Server::new(peer_list.clone());
-    let server4 = server::Server::new(peer_list.clone());
-    let server5 = server::Server::new(peer_list.clone());
+    let server1 = server::Server::new(id1, peer_list.clone());
+    let server2 = server::Server::new(id2, peer_list.clone());
+    let server3 = server::Server::new(id3, peer_list.clone());
+    let server4 = server::Server::new(id4, peer_list.clone());
+    let server5 = server::Server::new(id5, peer_list.clone());
 
     server1.run(rx1).await?;
 
