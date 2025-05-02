@@ -10,6 +10,7 @@ chrono = "0.4.40"
 futures-util = "0.3.31"
 rand = "0.9.1"
 thiserror = "2.0.12"
+tokio-util = "0.7.15"
 uuid ={ version = "1.16", features = ["v4"] }
 
 [dependencies.tokio]

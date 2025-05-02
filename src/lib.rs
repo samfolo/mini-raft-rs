@@ -1,4 +1,3 @@
-mod cluster_node;
 pub mod domain;
 mod errors;
 mod message;

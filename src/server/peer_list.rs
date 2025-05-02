@@ -9,12 +9,18 @@ use super::{
     handle::{self, ServerHandle},
 };
 
+type PeerList = HashMap<node_id::NodeId, ServerHandle>;
+
 #[derive(Clone)]
 pub struct ServerPeerList {
-    peer_list: HashMap<node_id::NodeId, ServerHandle>,
+    peer_list: PeerList,
 }
 
 impl ServerPeerList {
+    pub fn get(&self, id: &node_id::NodeId) -> Option<&ServerHandle> {
+        self.peer_list.get(id)
+    }
+
     pub fn insert(&mut self, id: node_id::NodeId, handle: ServerHandle) -> Option<ServerHandle> {
         self.peer_list.insert(id, handle)
     }
@@ -31,8 +37,8 @@ impl ServerPeerList {
     }
 }
 
-impl From<HashMap<node_id::NodeId, ServerHandle>> for ServerPeerList {
-    fn from(peer_list: HashMap<node_id::NodeId, ServerHandle>) -> Self {
+impl From<PeerList> for ServerPeerList {
+    fn from(peer_list: PeerList) -> Self {
         Self { peer_list }
     }
 }

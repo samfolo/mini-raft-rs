@@ -1,5 +1,6 @@
 #![allow(unused)] // TODO: use unused... need to refactor something first.
 
+mod actors;
 mod handle;
 mod log;
 mod peer_list;
@@ -14,17 +15,19 @@ pub use request::{
     ServerResponseHeaders,
 };
 
+use futures_util::StreamExt;
 use std::sync::RwLock;
 use tokio::{
     sync::{broadcast, mpsc, watch},
     time,
 };
+use tokio_util::sync::CancellationToken;
 
+use crate::domain::listener;
 use crate::{
-    client, cluster_node, domain, naive_logging, state_machine,
+    client, domain, message, naive_logging, state_machine,
     timeout::{self, TimeoutRange},
 };
-use crate::{cluster_node::error::ClusterNodeError, domain::listener};
 
 /// At any given time each server is in one of three states:
 /// leader, follower, or candidate.
@@ -55,6 +58,7 @@ pub struct Server {
     // -----------------------------------------------------
     heartbeat_interval: time::Duration,
     election_timeout_range: timeout::TimeoutRange,
+    peer_list: peer_list::ServerPeerList,
 }
 
 /// Raft servers communicate using remote procedure calls (RPCs), and the basic
@@ -64,10 +68,7 @@ pub struct Server {
 impl Server {
     const DEFAULT_MESSAGE_BUFFER_SIZE: usize = 32;
 
-    pub fn new(
-        heartbeat_interval: time::Duration,
-        election_timeout_range: timeout::TimeoutRange,
-    ) -> Self {
+    pub fn new(peer_list: peer_list::ServerPeerList) -> Self {
         let id = domain::node_id::NodeId::new();
         naive_logging::log(&id, "initialised.");
 
@@ -91,6 +92,7 @@ impl Server {
             // -----------------------------------------------------
             heartbeat_interval: time::Duration::from_millis(500),
             election_timeout_range: TimeoutRange::new(500, 1000),
+            peer_list,
         }
     }
 
@@ -129,9 +131,36 @@ impl Server {
     }
 }
 
-impl cluster_node::ClusterNode for Server {
-    async fn run(&self) -> Result<domain::node_id::NodeId, ClusterNodeError> {
+impl Server {
+    pub async fn run(
+        &self,
+        rx: mpsc::Receiver<message::Message>,
+    ) -> anyhow::Result<domain::node_id::NodeId> {
         naive_logging::log(&self.id, "running...");
+
+        let mut receiver = receiver::ServerReceiver::new(rx);
+
+        let stream = async_stream::stream! {
+            while let Some(item) = receiver.recv().await {
+                yield item;
+            }
+        };
+        futures_util::pin_mut!(stream);
+
+        let cancellation_token = CancellationToken::new();
+        let follower_cancellation_token = cancellation_token.clone();
+
+        // TEST THIS
+        cancellation_token.drop_guard();
+
+        tokio::join!(actors::run_follower_actor(
+            self,
+            follower_cancellation_token
+        ));
+
+        while let Some(message) = stream.next().await {
+            println!("{message:?}");
+        }
 
         Ok(self.id)
     }

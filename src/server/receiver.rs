@@ -4,19 +4,15 @@ use tokio::sync::mpsc;
 use crate::message;
 
 pub struct ServerReceiver {
-    recv: mpsc::Receiver<message::Message>,
+    rx: mpsc::Receiver<message::Message>,
 }
 
 impl ServerReceiver {
-    pub fn new(recv: mpsc::Receiver<message::Message>) -> Self {
-        Self { recv }
+    pub fn new(rx: mpsc::Receiver<message::Message>) -> Self {
+        Self { rx }
     }
 
-    pub async fn stream_recv(mut self) -> impl Stream {
-        async_stream::stream! {
-            while let Some(item) = self.recv.recv().await {
-                yield item;
-            }
-        }
+    pub fn recv(&mut self) -> impl Future<Output = Option<message::Message>> {
+        self.rx.recv()
     }
 }
