@@ -148,15 +148,6 @@ impl Server {
     ) -> anyhow::Result<domain::node_id::NodeId> {
         naive_logging::log(&self.id, "running...");
 
-        let mut receiver = receiver::ServerReceiver::new(rx);
-
-        let stream = async_stream::stream! {
-            while let Some(item) = receiver.recv().await {
-                yield item;
-            }
-        };
-        futures_util::pin_mut!(stream);
-
         let cancellation_token = CancellationToken::new();
         let follower_cancellation_token = cancellation_token.clone();
         let candidate_cancellation_token = cancellation_token.clone();
@@ -164,14 +155,10 @@ impl Server {
         let (follower_tx, follower_rx) = mpsc::channel(32);
         let (candidate_tx, candidate_rx) = mpsc::channel(32);
         tokio::join!(
+            actors::run_root_actor(self, rx, follower_tx, candidate_tx),
             actors::run_follower_actor(self, follower_rx, follower_cancellation_token),
             actors::run_candidate_actor(self, candidate_rx, candidate_cancellation_token)
         );
-
-        // need to pass this into the join so it can forward messages to the right actor...
-        while let Some(message) = stream.next().await {
-            println!("GOT: {message:?}");
-        }
 
         Ok(self.id)
     }

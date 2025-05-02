@@ -32,7 +32,13 @@ async fn main() -> anyhow::Result<()> {
     let server4 = server::Server::new(id4, peer_list.clone());
     let server5 = server::Server::new(id5, peer_list.clone());
 
-    server1.run(rx1).await?;
+    tokio::try_join!(
+        server1.run(rx1),
+        server2.run(rx2),
+        server3.run(rx3),
+        server4.run(rx4),
+        server5.run(rx5),
+    )?;
 
     match tokio::signal::ctrl_c().await {
         Ok(_) => println!("done"),
