@@ -150,7 +150,7 @@ impl fmt::Display for Command {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct InMemoryStateMachineSnapshot {
     x: i64,
     y: i64,

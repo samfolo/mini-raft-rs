@@ -4,7 +4,7 @@ use crate::{domain::node_id, message, naive_logging, state_machine};
 
 use super::request;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ClientHandle {
     sender: mpsc::Sender<message::Message>,
 }
@@ -14,7 +14,6 @@ impl ClientHandle {
         Self { sender }
     }
 
-    /// `RequestVote` RPCs are initiated by candidates during elections.
     pub async fn handle_client_response(
         &self,
         responder_id: node_id::NodeId,
@@ -23,7 +22,7 @@ impl ClientHandle {
     ) -> anyhow::Result<(), mpsc::error::SendError<message::Message>> {
         naive_logging::log(
             &responder_id,
-            &format!("-> CLIENT_COMMAND (res) {{ success: {success}, snapshot: {snapshot} }}"),
+            &format!("-> CLIENT_UPDATE_CMD (res) {{ success: {success}, snapshot: {snapshot} }}"),
         );
 
         self.sender

@@ -1,7 +1,7 @@
 use crate::{client, server};
 
 /// Message represents a message sent from or received by an actor.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Message {
     Client(client::Message),
     Server(server::Message),

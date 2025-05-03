@@ -5,7 +5,7 @@ use mini_raft_rs::{
     domain::node_id,
     server,
 };
-use tokio::{sync::mpsc, task::JoinSet, time};
+use tokio::{sync::mpsc, time};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

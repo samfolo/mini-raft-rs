@@ -2,7 +2,7 @@ use std::fmt;
 
 use tokio::sync::mpsc;
 
-use crate::{client, domain::node_id, message, naive_logging, state_machine};
+use crate::{client, domain::node_id, message, naive_logging};
 
 use super::{log, request};
 
@@ -138,16 +138,19 @@ impl ServerHandle {
     pub async fn handle_client_request(
         &self,
         sender_id: &impl fmt::Display,
-        body: state_machine::Command,
+        request: client::ClientRequest,
+        forwarded: bool,
     ) -> anyhow::Result<(), mpsc::error::SendError<message::Message>> {
         naive_logging::log(
             &sender_id,
-            &format!("-> CLIENT_COMMAND (req) {{ body: {} }}", body),
+            &format!(
+                "{} CLIENT_UPDATE_CMD (req) {{ body: {} }}",
+                if forwarded { ">>" } else { "->" },
+                request.body()
+            ),
         );
 
-        self.sender
-            .send(client::ClientRequest::new(body).into())
-            .await?;
+        self.sender.send(request.into()).await?;
 
         Ok(())
     }
