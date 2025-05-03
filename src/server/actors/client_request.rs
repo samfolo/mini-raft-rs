@@ -33,7 +33,7 @@ pub async fn run_client_request_actor(
                 match msg {
                     client::Message::Request(req) => {
                         naive_logging::log(&server.id, &match req.body {
-                            client::ClientRequestBody::Read => "<- CLIENT_READ_CMD (req) {{ }}".to_string(),
+                            client::ClientRequestBody::Read => "<- CLIENT_READ_CMD (req) { }".to_string(),
                             client::ClientRequestBody::Write { command } => format!("<- CLIENT_WRITE_CMD (req) {{ command: {command} }}")
                         });
 
@@ -49,7 +49,9 @@ pub async fn run_client_request_actor(
                             }
                         } else {
                             let leader_id = server.voted_for().await.unwrap();
-                            naive_logging::log(&server.id, &format!(">> forwarding to current leader... {{ leader_id: {leader_id} }}"));
+                            naive_logging::log(&server.id, &format!(">> forwarding to current leader... {{ \
+                                leader_id: {leader_id} \
+                            }}"));
 
                             let leader_handle = server.peer_list.get(&leader_id).unwrap();
                             leader_handle.handle_client_request(&server.id, req, true).await?;

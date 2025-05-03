@@ -70,7 +70,11 @@ pub async fn run_leader_actor(
                                         naive_logging::log(
                                             &server.id,
                                             &format!(
-                                                "<- APPEND_ENTRIES (req) {{ term: {request_term}, leader_id: {leader_id}, entries: {entries:?} }}"
+                                                "<- APPEND_ENTRIES (req) {{ \
+                                                    term: {request_term}, \
+                                                    leader_id: {leader_id}, \
+                                                    entries: {entries:?} \
+                                                }}"
                                             ),
                                         );
 
@@ -80,7 +84,10 @@ pub async fn run_leader_actor(
                                         naive_logging::log(
                                             &server.id,
                                             &format!(
-                                                "<- REQUEST_VOTE (req) {{ term: {request_term}, candidate_id: {candidate_id} }}"
+                                                "<- REQUEST_VOTE (req) {{ \
+                                                    term: {request_term}, \
+                                                    candidate_id: {candidate_id} \
+                                                }}"
                                             ),
                                         );
 
@@ -88,16 +95,26 @@ pub async fn run_leader_actor(
                                     }
                                 }
                             }
-                            server::Message::Response(res) => match res.body() {
-                                server::ServerResponseBody::AppendEntries { success } => {
-                                    naive_logging::log(&server.id, &format!("<- APPEND_ENTRIES (res) {{ term: {current_term}, success: {success} }}"));
-                                    if *success {
-                                        // track the commit tally vector here
+                            server::Message::Response(res) => {
+                                let response_term = res.term();
+
+                                match res.body() {
+                                    server::ServerResponseBody::AppendEntries { success } => {
+                                        naive_logging::log(&server.id, &format!("<- APPEND_ENTRIES (res) {{ \
+                                            term: {response_term}, \
+                                            success: {success} \
+                                        }}"));
+                                        if *success {
+                                            // track the commit tally vector here
+                                        }
+                                    },
+                                    server::ServerResponseBody::RequestVote { vote_granted } => {
+                                        naive_logging::log(&server.id, &format!("<- REQUEST_VOTE (res) {{ \
+                                            term: {response_term}, \
+                                            vote_granted: {vote_granted} \
+                                        }}"));
+                                        naive_logging::log(&server.id, "no longer campaigning; ignoring vote...");
                                     }
-                                },
-                                server::ServerResponseBody::RequestVote { vote_granted } => {
-                                    naive_logging::log(&server.id, &format!("<- REQUEST_VOTE (res) {{ term: {current_term}, vote_granted: {vote_granted} }}"));
-                                    naive_logging::log(&server.id, "no longer campaigning; ignoring vote...");
                                 }
                             },
                         }

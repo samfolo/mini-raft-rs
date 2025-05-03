@@ -92,7 +92,11 @@ pub async fn run_candidate_actor(
                                     server::ServerRequestBody::AppendEntries { leader_id, entries } => {
                                         naive_logging::log(
                                             &server.id,
-                                            &format!("<- APPEND_ENTRIES (req) {{ term: {request_term}, leader_id: {leader_id}, entries: {entries:?} }}"),
+                                            &format!("<- APPEND_ENTRIES (req) {{ \
+                                                term: {request_term}, \
+                                                leader_id: {leader_id}, \
+                                                entries: {entries:?} \
+                                            }}"),
                                         );
 
                                         let sender_handle = server.peer_list.get(&req.sender_id()).unwrap();
@@ -105,7 +109,11 @@ pub async fn run_candidate_actor(
                                         if success {
                                             naive_logging::log(
                                                 &server.id,
-                                                &format!("acknowledging new leader... {{ current_term: {current_term}, request_term: {request_term}, leader_id: {leader_id} }}"),
+                                                &format!("acknowledging new leader... {{ \
+                                                    current_term: {current_term}, \
+                                                    request_term: {request_term}, \
+                                                    leader_id: {leader_id} \
+                                                }}"),
                                             );
 
                                             server.set_current_term(|_| request_term).await;
@@ -117,7 +125,11 @@ pub async fn run_candidate_actor(
                                         } else {
                                             naive_logging::log(
                                                 &server.id,
-                                                &format!("ignoring request from stale leader... {{ current_term: {current_term}, request_term: {request_term}, leader_id: {leader_id} }}"),
+                                                &format!("ignoring request from stale leader... {{ \
+                                                    current_term: {current_term}, \
+                                                    request_term: {request_term}, \
+                                                    leader_id: {leader_id} \
+                                                }}"),
                                             );
 
                                             sender_handle.append_entries_response(server_id, current_term, false).await?;
@@ -126,7 +138,10 @@ pub async fn run_candidate_actor(
                                     server::ServerRequestBody::RequestVote { candidate_id } => {
                                         naive_logging::log(
                                             &server.id,
-                                            &format!("<- REQUEST_VOTE (req) {{ term: {request_term}, candidate_id: {candidate_id} }}"),
+                                            &format!("<- REQUEST_VOTE (req) {{ \
+                                                term: {request_term}, \
+                                                candidate_id: {candidate_id} \
+                                            }}"),
                                         );
 
                                         let sender_handle = server.peer_list.get(&req.sender_id()).unwrap();
@@ -135,7 +150,11 @@ pub async fn run_candidate_actor(
                                         if vote_granted {
                                             naive_logging::log(
                                                 &server.id,
-                                                &format!("backing out of election... {{ current_term: {current_term}, request_term: {request_term}, candidate_id: {candidate_id} }}"),
+                                                &format!("backing out of election... {{ \
+                                                    current_term: {current_term}, \
+                                                    request_term: {request_term}, \
+                                                    candidate_id: {candidate_id} \
+                                                }}"),
                                             );
 
                                             server.set_current_term(|_| request_term).await;
@@ -147,7 +166,11 @@ pub async fn run_candidate_actor(
                                         } else {
                                             naive_logging::log(
                                                 &server.id,
-                                                &format!("ignoring opposing candidate... {{ current_term: {current_term}, request_term: {request_term}, candidate_id: {candidate_id} }}"),
+                                                &format!("ignoring opposing candidate... {{ \
+                                                    current_term: {current_term}, \
+                                                    request_term: {request_term}, \
+                                                    candidate_id: {candidate_id} \
+                                                }}"),
                                             );
 
                                             sender_handle.request_vote_response(server_id, current_term, false).await?;
@@ -155,35 +178,45 @@ pub async fn run_candidate_actor(
                                     }
                                 }
                             }
-                            server::Message::Response(res) => match res.body() {
-                                server::ServerResponseBody::AppendEntries { success } => {
-                                    naive_logging::log(&server.id, &format!("<- APPEND_ENTRIES (res) {{ term: {current_term}, success: {success} }}"));
-                                    unreachable!("should never have received this message");
-                                },
-                                server::ServerResponseBody::RequestVote { vote_granted } => {
-                                    naive_logging::log(
-                                        &server.id,
-                                        &format!("<- REQUEST_VOTE (res) {{ term: {current_term}, vote_granted: {vote_granted} }}"),
-                                    );
+                            server::Message::Response(res) => {
+                                let response_term = res.term();
 
-                                    if *vote_granted {
-                                        total_votes_over_term += 1;
+                                match res.body() {
+                                    server::ServerResponseBody::AppendEntries { success } => {
+                                        naive_logging::log(&server.id, &format!("<- APPEND_ENTRIES (res) {{ \
+                                            term: {response_term}, \
+                                            success: {success} \
+                                        }}"));
+                                        unreachable!("should never have received this message");
+                                    },
+                                    server::ServerResponseBody::RequestVote { vote_granted } => {
+                                        naive_logging::log(
+                                            &server.id,
+                                            &format!("<- REQUEST_VOTE (res) {{ \
+                                                term: {response_term}, \
+                                                vote_granted: {vote_granted} \
+                                            }}"),
+                                        );
 
-                                        // A candidate wins an election if it receives votes from a majority of the servers
-                                        // in the full cluster for the same term. Each server will vote for at most one candidate
-                                        // in a given term, on a first-come-first-served basis.
-                                        //
-                                        // The majority rule ensures that at most one candidate can win the election for a
-                                        // particular term.
-                                        if total_votes_over_term * 2 > total_votes_requested {
-                                            naive_logging::log(&server.id, "received a majority of votes this term.");
-                                            // Once a candidate wins an election, it becomes leader. It then sends heartbeat
-                                            // messages to all of the other servers to establish its authority and prevent new
-                                            // elections.
-                                            if let Err(err) = server.upgrade_to_leader() {
-                                                bail!("failed to upgrade to leader: {err:?}");
+                                        if *vote_granted {
+                                            total_votes_over_term += 1;
+
+                                            // A candidate wins an election if it receives votes from a majority of the servers
+                                            // in the full cluster for the same term. Each server will vote for at most one candidate
+                                            // in a given term, on a first-come-first-served basis.
+                                            //
+                                            // The majority rule ensures that at most one candidate can win the election for a
+                                            // particular term.
+                                            if total_votes_over_term * 2 > total_votes_requested {
+                                                naive_logging::log(&server.id, "received a majority of votes this term.");
+                                                // Once a candidate wins an election, it becomes leader. It then sends heartbeat
+                                                // messages to all of the other servers to establish its authority and prevent new
+                                                // elections.
+                                                if let Err(err) = server.upgrade_to_leader() {
+                                                    bail!("failed to upgrade to leader: {err:?}");
+                                                }
+                                                break 'election;
                                             }
-                                            break 'election;
                                         }
                                     }
                                 }
