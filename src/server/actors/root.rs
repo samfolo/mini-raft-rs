@@ -1,15 +1,9 @@
-use std::pin;
-
-use anyhow::bail;
 use futures_util::StreamExt;
-use tokio::{
-    sync::mpsc,
-    time::{self, Sleep},
-};
+use tokio::sync::mpsc;
 
 use crate::{
-    client, message, naive_logging,
-    server::{self, Server, ServerState, receiver, request::ServerMessagePayload},
+    client, message,
+    server::{self, Server, ServerState, receiver},
 };
 
 pub async fn run_root_actor(

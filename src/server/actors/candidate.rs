@@ -1,10 +1,7 @@
 use anyhow::bail;
 use tokio::{sync::mpsc, task::JoinSet, time};
 
-use crate::{
-    domain::node_id,
-    server::{self, Server, ServerState},
-};
+use crate::server::{self, Server, ServerState};
 
 pub async fn run_candidate_actor(
     server: &Server,
@@ -17,13 +14,6 @@ pub async fn run_candidate_actor(
     let cancelled = cancellation_token.cancelled();
     tokio::pin!(cancelled);
 
-    let request_vote_cb = async move |id: node_id::NodeId, handle: server::ServerHandle| {
-        handle
-            .request_vote(server.id.clone(), server.current_term())
-            .await
-            .map_err(|err| anyhow::anyhow!("failed to request vote: {err:?}"))
-    };
-
     loop {
         if *state.borrow_and_update() == ServerState::Candidate {
             let timeout = server.generate_random_timeout();
@@ -31,33 +21,26 @@ pub async fn run_candidate_actor(
             let mut join_set = JoinSet::new();
             let current_term = server.current_term();
 
-            for (peer_id, peer_handle) in server.peer_list.peers_iter() {
-                let peer_id = peer_id.clone();
+            for (_, peer_handle) in server.peer_list.peers_iter() {
                 let peer_handle = peer_handle.clone();
 
                 join_set.spawn(async move {
-                    if let Err(err) = peer_handle
-                        .request_vote(server_id.clone(), current_term)
+                    peer_handle
+                        .request_vote(server_id, current_term)
                         .await
-                    {
-                        bail!("failed to request vote: {err:?}")
-                    }
-
-                    Ok(())
+                        .map_err(|err| anyhow::anyhow!("failed to request vote: {err:?}"))
                 });
             }
 
-            let results = join_set.join_all().await;
+            let _ = join_set.join_all().await;
 
             // Wait for a message, or a random timeout
             // If message, reset the random timeout
             // else upgrade to candidate
             time::sleep(timeout).await;
         } else {
-            let mut state_changed = state.changed();
-
             tokio::select! {
-              res = state_changed => {
+              res = state.changed() => {
                 if let Err(err) = res {
                   bail!("{:?}", err);
                 }
@@ -68,6 +51,4 @@ pub async fn run_candidate_actor(
             }
         }
     }
-
-    Ok(())
 }

@@ -23,11 +23,11 @@ pub async fn run_follower_actor(
     let cancelled = cancellation_token.cancelled();
     tokio::pin!(cancelled);
 
-    let mut timeout_dur = server.generate_random_timeout();
-    let mut timeout = time::sleep(timeout_dur);
+    let timeout_dur = server.generate_random_timeout();
+    let timeout = time::sleep(timeout_dur);
     tokio::pin!(timeout);
 
-    let mut reset_timeout = |timeout: &mut pin::Pin<&mut Sleep>| {
+    let reset_timeout = |timeout: &mut pin::Pin<&mut Sleep>| {
         timeout.set(time::sleep(server.generate_random_timeout()))
     };
 
@@ -106,6 +106,4 @@ pub async fn run_follower_actor(
             }
         }
     }
-
-    Ok(())
 }

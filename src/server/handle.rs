@@ -1,10 +1,8 @@
-use std::collections::HashMap;
+use tokio::sync::mpsc;
 
-use tokio::sync::{mpsc, oneshot};
+use crate::{client, domain::node_id, message, naive_logging, state_machine};
 
-use crate::{client, domain::node_id, message, naive_logging, server, state_machine};
-
-use super::{ServerRequest, log, request};
+use super::{log, request};
 
 #[derive(Clone)]
 pub struct ServerHandle {
