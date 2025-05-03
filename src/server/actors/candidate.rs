@@ -8,7 +8,7 @@ use crate::{
 
 pub async fn run_candidate_actor(
     server: &Server,
-    receiver: mpsc::Receiver<server::ServerRequest>,
+    receiver: mpsc::Receiver<server::Message>,
     cancellation_token: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<()> {
     let mut state = server.state.clone();

@@ -15,8 +15,8 @@ use crate::{
 pub async fn run_root_actor(
     server: &Server,
     receiver: mpsc::Receiver<message::Message>,
-    follower_tx: mpsc::Sender<server::ServerRequest>,
-    candidate_tx: mpsc::Sender<server::ServerRequest>,
+    follower_tx: mpsc::Sender<server::Message>,
+    candidate_tx: mpsc::Sender<server::Message>,
 ) -> anyhow::Result<()> {
     let mut state = server.state.clone();
 
@@ -32,40 +32,14 @@ pub async fn run_root_actor(
     // need to forward messages to the right actor...
     while let Some(message) = stream.next().await {
         match message {
-            message::Message::Server(server_msg) => match server_msg {
-                server::Message::Request(req) => {
-                    let request_term = req.term();
-
-                    match req.body() {
-                        server::ServerRequestBody::AppendEntries { leader_id, entries } => {
-                            naive_logging::log(
-                                &server.id,
-                                &format!(
-                                    "<- APPEND_ENTRIES (req) {{ term: {request_term}, leader_id: {leader_id}, entries: {entries:?} }}"
-                                ),
-                            );
-                        }
-                        server::ServerRequestBody::RequestVote { candidate_id } => {
-                            naive_logging::log(
-                                &server.id,
-                                &format!(
-                                    "<- REQUEST_VOTE (req) {{ term: {request_term}, candidate_id: {candidate_id} }}"
-                                ),
-                            );
-                        }
-                    }
+            message::Message::Server(server_msg) => match *state.borrow_and_update() {
+                ServerState::Follower => {
+                    follower_tx.send(server_msg).await?;
                 }
-                server::Message::Response(res) => match res.body() {
-                    server::ServerResponseBody::AppendEntries {} => {
-                        naive_logging::log(&server.id, "<- APPEND_ENTRIES (res) { }");
-                    }
-                    server::ServerResponseBody::RequestVote { vote_granted } => {
-                        naive_logging::log(
-                            &server.id,
-                            &format!("<- REQUEST_VOTE (res) {{ vote_granted: {vote_granted} }}"),
-                        );
-                    }
-                },
+                ServerState::Candidate => {
+                    candidate_tx.send(server_msg).await?;
+                }
+                _ => {}
             },
             m => println!("CLIENT: {m:?}"),
         }

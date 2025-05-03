@@ -6,11 +6,14 @@ use tokio::{
     time::{self, Sleep},
 };
 
-use crate::server::{self, Server, ServerState};
+use crate::{
+    naive_logging,
+    server::{self, Server, ServerState, request::ServerMessagePayload},
+};
 
 pub async fn run_follower_actor(
     server: &Server,
-    mut receiver: mpsc::Receiver<server::ServerRequest>,
+    mut receiver: mpsc::Receiver<server::Message>,
     cancellation_token: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<()> {
     let mut state = server.state.clone();
@@ -18,21 +21,16 @@ pub async fn run_follower_actor(
     let cancelled = cancellation_token.cancelled();
     tokio::pin!(cancelled);
 
-    let recv = receiver.recv();
-    tokio::pin!(recv);
-
     let mut timeout_dur = server.generate_random_timeout();
     let mut timeout = time::sleep(timeout_dur);
     tokio::pin!(timeout);
+
     let mut reset_timeout = |timeout: &mut pin::Pin<&mut Sleep>| {
         timeout.set(time::sleep(server.generate_random_timeout()))
     };
 
     loop {
         if *state.borrow_and_update() == ServerState::Follower {
-            println!("{}: FOLLOWER", server.id);
-            let mut state_changed = state.changed();
-
             // Wait for a message, or a random timeout
             // If message, reset the random timeout
             // else upgrade to candidate
@@ -42,16 +40,53 @@ pub async fn run_follower_actor(
                   bail!("failed to upgrade to candidate: {err:?}");
                 }
               }
-              msg = &mut recv => {
-                reset_timeout(&mut timeout); // this might be an internal channel...
-              }
-              res = state_changed => {
+              res = state.changed() => {
                 if let Err(err) = res {
                   bail!("{:?}", err);
                 }
               }
               _ = &mut cancelled => {
                 return Ok(())
+              }
+              Some(msg) = receiver.recv() => {
+                match msg {
+                    server::Message::Request(req) => {
+                        let request_term = req.term();
+
+                        match req.body() {
+                            server::ServerRequestBody::AppendEntries { leader_id, entries } => {
+                                naive_logging::log(
+                                    &server.id,
+                                    &format!(
+                                        "<- APPEND_ENTRIES (req) {{ term: {request_term}, leader_id: {leader_id}, entries: {entries:?} }}"
+                                    ),
+                                );
+                            }
+                            server::ServerRequestBody::RequestVote { candidate_id } => {
+                                naive_logging::log(
+                                    &server.id,
+                                    &format!(
+                                        "<- REQUEST_VOTE (req) {{ term: {request_term}, candidate_id: {candidate_id} }}"
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    server::Message::Response(res) => match res.body() {
+                        server::ServerResponseBody::AppendEntries {} => {
+                            naive_logging::log(&server.id, "<- APPEND_ENTRIES (res) { }");
+                        }
+                        server::ServerResponseBody::RequestVote { vote_granted } => {
+                            naive_logging::log(
+                                &server.id,
+                                &format!("<- REQUEST_VOTE (res) {{ vote_granted: {vote_granted} }}"),
+                            );
+                        }
+                    },
+                }
+
+                // decide when this happens:
+                reset_timeout(&mut timeout);
               }
             }
         } else {
@@ -62,6 +97,8 @@ pub async fn run_follower_actor(
                 if let Err(err) = res {
                   bail!("{:?}", err);
                 }
+
+                reset_timeout(&mut timeout);
               }
               _ = &mut cancelled => {
                 return Ok(())
