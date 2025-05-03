@@ -51,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
 
         client::RandomDataClient::init()
             .connect_to_cluster(peer_list.clone())
-            .make_random_requests()
+            .run()
             .await
     });
 

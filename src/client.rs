@@ -1,3 +1,4 @@
+mod actors;
 mod handle;
 mod request;
 
@@ -98,16 +99,11 @@ impl RandomDataClient {
         Ok(())
     }
 
-    pub async fn make_random_requests(&self) -> self::Result<()> {
-        let timeout_range =
-            timeout::TimeoutRange::new(self.min_request_interval_ms, self.max_request_interval_ms);
+    pub async fn run(self) -> Result<String> {
+        let (publisher, mut receiver) = mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
 
-        let (tx, mut rx) = mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
-        loop {
-            match self.make_random_request(tx.clone()).await {
-                Ok(_) => time::sleep(timeout_range.random()).await,
-                Err(err) => return Err(ClientRequestError::Unexpected(err.into())),
-            }
-        }
+        tokio::try_join!(actors::run_outbound_actor(&self, publisher))?;
+
+        Ok(self.id)
     }
 }
