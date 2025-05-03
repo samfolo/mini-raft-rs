@@ -7,6 +7,12 @@ pub enum Message {
     Server(server::Message),
 }
 
+impl From<client::Message> for Message {
+    fn from(message: client::Message) -> Self {
+        Self::Client(message)
+    }
+}
+
 impl From<client::ClientRequest> for Message {
     fn from(req: client::ClientRequest) -> Self {
         Self::Client(client::Message::Request(req))
@@ -16,6 +22,12 @@ impl From<client::ClientRequest> for Message {
 impl From<client::ClientResponse> for Message {
     fn from(res: client::ClientResponse) -> Self {
         Self::Client(client::Message::Response(res))
+    }
+}
+
+impl From<server::Message> for Message {
+    fn from(message: server::Message) -> Self {
+        Self::Server(message)
     }
 }
 

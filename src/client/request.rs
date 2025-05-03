@@ -9,6 +9,18 @@ pub enum Message {
     Response(ClientResponse),
 }
 
+impl From<ClientRequest> for Message {
+    fn from(req: ClientRequest) -> Self {
+        Self::Request(req)
+    }
+}
+
+impl From<ClientResponse> for Message {
+    fn from(res: ClientResponse) -> Self {
+        Self::Response(res)
+    }
+}
+
 /// ClientRequest represents a request sent by a Client.
 #[derive(Debug, Clone)]
 pub struct ClientRequest {

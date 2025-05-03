@@ -12,6 +12,18 @@ pub enum Message {
     Response(ServerResponse),
 }
 
+impl From<ServerRequest> for Message {
+    fn from(req: ServerRequest) -> Self {
+        Self::Request(req)
+    }
+}
+
+impl From<ServerResponse> for Message {
+    fn from(res: ServerResponse) -> Self {
+        Self::Response(res)
+    }
+}
+
 /// ServerMessagePayload represents the methods available on the payload of a server-specific Message
 pub trait ServerMessagePayload<Body: Clone + fmt::Debug> {
     fn sender_id(&self) -> node_id::NodeId;
