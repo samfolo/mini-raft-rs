@@ -1,5 +1,3 @@
-#![allow(unused)] // TODO: use... need to refactor something first.
-
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
@@ -30,6 +28,14 @@ impl InMemoryStateMachine {
         }
     }
 
+    pub fn get_snapshot(&self) -> InMemoryStateMachineSnapshot {
+        InMemoryStateMachineSnapshot {
+            x: self.x,
+            y: self.y,
+            z: self.z,
+        }
+    }
+
     pub fn apply_command(&mut self, command: &Command) {
         command.exec(self)
     }
@@ -38,6 +44,12 @@ impl InMemoryStateMachine {
 impl Default for InMemoryStateMachine {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl PartialEq<InMemoryStateMachineSnapshot> for InMemoryStateMachine {
+    fn eq(&self, other: &InMemoryStateMachineSnapshot) -> bool {
+        self.x == other.x && self.y == other.y && self.z == other.z
     }
 }
 
@@ -95,7 +107,7 @@ impl fmt::Display for Op {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Command {
     op: Op,
     key: StateKey,
@@ -133,6 +145,25 @@ impl fmt::Display for Command {
             self.op(),
             self.value()
         )
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct InMemoryStateMachineSnapshot {
+    x: i64,
+    y: i64,
+    z: i64,
+}
+
+impl fmt::Display for InMemoryStateMachineSnapshot {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{{ X => {}, Y => {}, Z => {} }}", self.x, self.y, self.z)
+    }
+}
+
+impl PartialEq<InMemoryStateMachine> for InMemoryStateMachineSnapshot {
+    fn eq(&self, other: &InMemoryStateMachine) -> bool {
+        self.x == other.x && self.y == other.y && self.z == other.z
     }
 }
 

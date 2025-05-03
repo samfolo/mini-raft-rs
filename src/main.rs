@@ -1,28 +1,78 @@
+use std::collections::HashMap;
+
 use mini_raft_rs::{
     client::{self, Client},
-    cluster,
+    domain::node_id,
+    server,
 };
-use tokio::time;
+use tokio::{sync::mpsc, task::JoinSet, time};
 
 #[tokio::main]
-async fn main() {
-    let cluster = cluster::Cluster::new(1024)
-        .with_node_count(5)
-        .with_election_timeout_range(750, 1000)
-        // Ideally the configured heartbeat interval should be
-        // less than 0.5x the minimum election timeout range:
-        .with_heartbeat_interval(374)
-        .start()
-        .await;
+async fn main() -> anyhow::Result<()> {
+    let id1 = node_id::NodeId::new();
+    let id2 = node_id::NodeId::new();
+    let id3 = node_id::NodeId::new();
+    let id4 = node_id::NodeId::new();
+    let id5 = node_id::NodeId::new();
 
-    time::sleep(time::Duration::from_millis(2000)).await;
+    let (tx1, rx1) = mpsc::channel(8);
+    let (tx2, rx2) = mpsc::channel(8);
+    let (tx3, rx3) = mpsc::channel(8);
+    let (tx4, rx4) = mpsc::channel(8);
+    let (tx5, rx5) = mpsc::channel(8);
 
-    client::RandomDataClient::init()
-        .with_request_interval_range(550, 887)
-        .connect_to_cluster(&cluster)
-        .make_random_requests()
-        .await
-        .unwrap();
+    let mut init = HashMap::new();
+    init.insert(id1, server::ServerHandle::new(tx1));
+    init.insert(id2, server::ServerHandle::new(tx2));
+    init.insert(id3, server::ServerHandle::new(tx3));
+    init.insert(id4, server::ServerHandle::new(tx4));
+    init.insert(id5, server::ServerHandle::new(tx5));
 
-    cluster.run_until_ctrl_c().await;
+    let peer_list = server::ServerPeerList::from(init);
+
+    let server1 = server::Server::new(id1, peer_list.clone())
+        .heartbeat_interval_ms(350)
+        .election_timeout_range(751, 1200);
+    let server2 = server::Server::new(id2, peer_list.clone())
+        .heartbeat_interval_ms(350)
+        .election_timeout_range(751, 1200);
+    let server3 = server::Server::new(id3, peer_list.clone())
+        .heartbeat_interval_ms(350)
+        .election_timeout_range(751, 1200);
+    let server4 = server::Server::new(id4, peer_list.clone())
+        .heartbeat_interval_ms(350)
+        .election_timeout_range(751, 1200);
+    let server5 = server::Server::new(id5, peer_list.clone())
+        .heartbeat_interval_ms(350)
+        .election_timeout_range(751, 1200);
+
+    let mut clients = JoinSet::new();
+
+    let client_conn1 = peer_list.clone();
+    clients.spawn(async move {
+        time::sleep(time::Duration::from_millis(2000)).await;
+        client::RandomDataClient::init()
+            .connect_to_cluster(client_conn1)
+            .run()
+            .await
+    });
+
+    tokio::try_join!(
+        server1.run(rx1),
+        server2.run(rx2),
+        server3.run(rx3),
+        server4.run(rx4),
+        server5.run(rx5),
+    )?;
+
+    match tokio::signal::ctrl_c().await {
+        Ok(_) => {}
+        Err(err) => panic!("{err:?}"),
+    };
+
+    clients.abort_all();
+    while clients.join_next().await.is_some() {
+        println!("fin.");
+    }
+    Ok(())
 }

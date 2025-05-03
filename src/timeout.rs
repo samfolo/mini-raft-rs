@@ -7,7 +7,7 @@ pub struct TimeoutRange {
 }
 
 impl TimeoutRange {
-    pub fn new(min: u64, max: u64) -> Self {
+    pub const fn new(min: u64, max: u64) -> Self {
         Self {
             min: time::Duration::from_millis(min),
             max: time::Duration::from_millis(max),

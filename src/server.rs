@@ -1,19 +1,29 @@
-#![allow(unused)] // TODO: use unused... need to refactor something first.
-
+mod actors;
+mod handle;
 mod log;
-mod routines;
-mod rpc;
+mod peer_list;
+mod receiver;
+mod request;
 
-pub use rpc::ServerRequest;
-
-use std::sync::RwLock;
-use tokio::{
-    sync::{broadcast, watch},
-    time,
+pub use handle::ServerHandle;
+pub use log::ServerLogEntry;
+pub use peer_list::ServerPeerList;
+pub use request::{
+    Message, ServerRequest, ServerRequestBody, ServerRequestHeaders, ServerResponse,
+    ServerResponseBody, ServerResponseHeaders,
 };
 
-use crate::{client, cluster_node, domain, naive_logging, state_machine, timeout};
-use crate::{cluster_node::error::ClusterNodeError, domain::listener};
+use tokio::{
+    sync::{RwLock, mpsc, watch},
+    time,
+};
+use tokio_util::sync::CancellationToken;
+
+use crate::domain::node_id;
+use crate::{
+    domain, message, naive_logging, state_machine,
+    timeout::{self, TimeoutRange},
+};
 
 /// At any given time each server is in one of three states:
 /// leader, follower, or candidate.
@@ -32,27 +42,24 @@ pub struct Server {
     id: domain::node_id::NodeId,
     state: watch::Receiver<ServerState>,
     state_tx: watch::Sender<ServerState>,
-    listener: listener::Listener,
     state_machine: state_machine::InMemoryStateMachine,
 
     // Persistent state:
     // -----------------------------------------------------
+    /// Each server stores a current term number, which increases
+    /// monotonically over time.
     current_term: RwLock<usize>,
-    voted_for: RwLock<Option<domain::node_id::NodeId>>,
+    voted_for: RwLock<Option<node_id::NodeId>>,
     log: log::ServerLog,
 
     // Volatile state:
     // -----------------------------------------------------
-    commit_index: RwLock<usize>,
-    last_applied: RwLock<usize>,
 
     // Cluster configuration:
     // -----------------------------------------------------
-    cluster_node_count: watch::Receiver<u64>,
-    cluster_conn: broadcast::Sender<rpc::ServerRequest>,
-    client_conn: broadcast::WeakSender<client::ClientRequest>,
     heartbeat_interval: time::Duration,
     election_timeout_range: timeout::TimeoutRange,
+    peer_list: peer_list::ServerPeerList,
 }
 
 /// Raft servers communicate using remote procedure calls (RPCs), and the basic
@@ -61,17 +68,13 @@ pub struct Server {
 /// - `AppendEntries`
 impl Server {
     const DEFAULT_MESSAGE_BUFFER_SIZE: usize = 32;
+    const DEFAULT_HEARTBEAT_INTERVAL: time::Duration = time::Duration::from_millis(374);
+    const DEFAULT_ELECTION_TIMEOUT_RANGE: TimeoutRange = TimeoutRange::new(750, 1000);
 
-    pub fn new(
-        cluster_conn: broadcast::Sender<rpc::ServerRequest>,
-        client_conn: broadcast::WeakSender<client::ClientRequest>,
-        heartbeat_interval: time::Duration,
-        election_timeout_range: timeout::TimeoutRange,
-        cluster_node_count: watch::Receiver<u64>,
-        listener: listener::Listener,
-    ) -> Self {
-        let id = domain::node_id::NodeId::new();
+    pub fn new(id: node_id::NodeId, mut peer_list: peer_list::ServerPeerList) -> Self {
         naive_logging::log(&id, "initialised.");
+
+        peer_list.remove(&id);
 
         let (state_tx, state) = watch::channel(ServerState::Follower);
 
@@ -81,91 +84,56 @@ impl Server {
             id,
             state,
             state_tx,
-            listener,
             state_machine: state_machine::InMemoryStateMachine::new(),
 
             // Persistent state:
             // -----------------------------------------------------
             current_term: RwLock::new(0),
             voted_for: RwLock::new(None),
-            log: Default::default(),
+            log: log::ServerLog::default(),
 
             // Volatile state:
             // -----------------------------------------------------
-            commit_index: RwLock::new(0),
-            last_applied: RwLock::new(0),
 
             // Cluster configuration:
             // -----------------------------------------------------
-            cluster_node_count,
-            cluster_conn,
-            client_conn,
-            heartbeat_interval,
-            election_timeout_range,
+            heartbeat_interval: Self::DEFAULT_HEARTBEAT_INTERVAL,
+            election_timeout_range: Self::DEFAULT_ELECTION_TIMEOUT_RANGE,
+            peer_list,
         }
     }
 
-    fn current_term(&self) -> usize {
-        match self.current_term.read() {
-            Ok(res) => *res,
-            Err(err) => panic!("failed to read current_term: {err:?}"),
-        }
+    pub fn heartbeat_interval_ms(mut self, interval_ms: u64) -> Self {
+        self.heartbeat_interval = time::Duration::from_millis(interval_ms);
+        self
     }
 
-    fn set_current_term(&self, candidate_id_setter: impl Fn(usize) -> usize) {
-        match self.current_term.write() {
-            Ok(mut res) => {
-                *res = candidate_id_setter(*res);
-            }
-            Err(err) => panic!("failed to modify current_term: {err:?}"),
-        };
+    pub fn election_timeout_range(mut self, min: u64, max: u64) -> Self {
+        assert!(min < max);
+        self.election_timeout_range = TimeoutRange::new(min, max);
+        self
     }
 
-    fn commit_index(&self) -> usize {
-        match self.commit_index.read() {
-            Ok(res) => *res,
-            Err(err) => panic!("failed to read commit_index: {err:?}"),
-        }
+    pub fn generate_random_timeout(&self) -> time::Duration {
+        self.election_timeout_range.random()
     }
 
-    fn set_commit_index(&self, new_index: usize) {
-        match self.commit_index.write() {
-            Ok(mut res) => *res = new_index,
-            Err(err) => panic!("failed to modify commit_index: {err:?}"),
-        }
+    pub async fn current_term(&self) -> usize {
+        *self.current_term.read().await
     }
 
-    fn last_applied(&self) -> usize {
-        match self.last_applied.read() {
-            Ok(res) => *res,
-            Err(err) => panic!("failed to read last_applied: {err:?}"),
-        }
+    pub async fn set_current_term(&self, setter: impl FnOnce(usize) -> usize) {
+        let mut val = self.current_term.write().await;
+        *val = setter(*val)
     }
 
-    fn set_last_applied(&self, new_index: usize) {
-        match self.last_applied.write() {
-            Ok(mut res) => *res = new_index,
-            Err(err) => panic!("failed to modify last_applied: {err:?}"),
-        }
+    pub async fn voted_for(&self) -> Option<node_id::NodeId> {
+        *self.voted_for.read().await
     }
 
-    /// Current terms are exchanged whenever Servers communicate; if
-    /// one Server’s current term is smaller than the other’s, then it updates
-    /// its current term to the larger value.
-    async fn sync_term(
-        &self,
-        other_server_term: usize,
-    ) -> Result<(), watch::error::SendError<ServerState>> {
-        if self.current_term() < other_server_term {
-            self.set_current_term(|_| other_server_term);
-            return self.downgrade_to_follower();
-        }
-
-        Ok(())
-    }
-
-    fn cluster_node_count(&self) -> u64 {
-        *self.cluster_node_count.borrow()
+    pub async fn set_voted_for(&self, candidate_id: Option<node_id::NodeId>) {
+        let mut val = self.voted_for.write().await;
+        *val = candidate_id
     }
 
     /// If a candidate or leader discovers that its term is out of date, it
@@ -202,44 +170,41 @@ impl Server {
         Ok(())
     }
 
-    fn voted_for(&self) -> Option<domain::node_id::NodeId> {
-        match self.voted_for.read() {
-            Ok(res) => *res,
-            Err(err) => panic!("failed to read voted_for: {err:?}"),
-        }
-    }
-
-    fn vote(&self, candidate_id: Option<domain::node_id::NodeId>) {
-        match self.voted_for.write() {
-            Ok(mut res) => {
-                *res = candidate_id;
-            }
-            Err(err) => panic!("failed to modify voted_for: {err:?}"),
-        };
-    }
-
-    fn append_to_log(&self, command: state_machine::Command) {
-        self.log.append_cmd(self.current_term(), command);
+    async fn append_to_log(&self, command: state_machine::Command) {
+        self.log
+            .append_cmd(self.log.len() + 1, self.current_term().await, command);
     }
 }
 
-impl cluster_node::ClusterNode for Server {
-    async fn run(&self) -> Result<domain::node_id::NodeId, ClusterNodeError> {
+impl Server {
+    pub async fn run(
+        &self,
+        rx: mpsc::Receiver<message::Message>,
+    ) -> anyhow::Result<domain::node_id::NodeId> {
         naive_logging::log(&self.id, "running...");
 
-        match tokio::try_join!(
-            self.run_election_routine(),
-            self.run_heartbeat_routine(),
-            self.run_base_routine(),
-            self.handle_client_request()
-        ) {
-            Ok(res) => {
-                println!("{res:#?}");
-            }
-            Err(err) => {
-                println!("{err:#?}");
-            }
-        }
+        let cancel_tok = CancellationToken::new();
+
+        let (follower_tx, follower_rx) = mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
+        let (candidate_tx, candidate_rx) = mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
+        let (leader_tx, leader_rx) = mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
+        let (client_request_tx, client_request_rx) =
+            mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
+
+        tokio::try_join!(
+            actors::run_root_actor(
+                self,
+                rx,
+                follower_tx,
+                candidate_tx,
+                leader_tx,
+                client_request_tx
+            ),
+            actors::run_follower_actor(self, follower_rx, cancel_tok.clone()),
+            actors::run_candidate_actor(self, candidate_rx, cancel_tok.clone()),
+            actors::run_leader_actor(self, leader_rx, cancel_tok.clone()),
+            actors::run_client_request_actor(self, client_request_rx, cancel_tok.clone())
+        )?;
 
         Ok(self.id)
     }
@@ -253,28 +218,27 @@ impl Drop for Server {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // use tokio::sync::mpsc;
 
-    const TEST_CHANNEL_CAPACITY: usize = 16;
+    // use super::*;
 
-    #[tokio::test]
-    async fn starts() -> anyhow::Result<()> {
-        let (cluster_conn, _) = broadcast::channel(TEST_CHANNEL_CAPACITY);
-        let (client_conn, _) = broadcast::channel(TEST_CHANNEL_CAPACITY);
-        let (_, cluster_node_count) = watch::channel(1);
+    // const TEST_CHANNEL_CAPACITY: usize = 16;
 
-        let listener = listener::Listener::bind_random_local_port().await?;
-        let client_conn = client_conn.downgrade();
+    // Actor model:
+    // Has a mailbox into which it can ALWAYS receive messages
+    // Has an address book (i.e. is aware of peers)
+    // Can be contacted by an external client
 
-        let _ = Server::new(
-            cluster_conn,
-            client_conn,
-            time::Duration::from_millis(5),
-            timeout::TimeoutRange::new(10, 20),
-            cluster_node_count,
-            listener,
-        );
+    // When in a leader state:
+    // Sends heartbeat messages in parallel to its peers
+    // Tracks volatile state per-peer, updating it per-heartbeat
 
-        Ok(())
-    }
+    // When in a follower state:
+    // Upgrades to a candidate state after a period of time passes without any messages received
+
+    // When in a candidate state:
+    // Increments its "term" and sends messages in parallel to its peers
+    // Tallies votes each election and anticipates a majority of votes
+    // Restarts election (incremented term, new random timeout) if it does not win the election
+    // Reverts to follower if it receives indication another node has won
 }

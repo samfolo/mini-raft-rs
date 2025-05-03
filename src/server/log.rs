@@ -10,6 +10,13 @@ pub struct ServerLog {
 }
 
 impl ServerLog {
+    pub fn len(&self) -> usize {
+        match self.entries.read() {
+            Ok(entries) => entries.len(),
+            Err(err) => panic!("failed to read log entries: {err:?}"),
+        }
+    }
+
     pub fn entries_from(&self, index: usize) -> Vec<ServerLogEntry> {
         match self.entries.read() {
             Ok(entries) => entries[index..].to_vec(),
@@ -17,10 +24,14 @@ impl ServerLog {
         }
     }
 
-    pub fn append_cmd(&self, term: usize, command: state_machine::Command) {
+    pub fn append_cmd(&self, index: usize, term: usize, command: state_machine::Command) {
         match self.entries.write() {
             Ok(mut entries) => {
-                entries.push(ServerLogEntry { term, command });
+                entries.push(ServerLogEntry {
+                    index,
+                    term,
+                    command,
+                });
             }
             Err(err) => panic!("failed to append entry to log: {err:?}"),
         };
@@ -39,12 +50,16 @@ impl fmt::Display for ServerLog {
 
 #[derive(Clone, Debug)]
 pub struct ServerLogEntry {
+    index: usize,
     term: usize,
     command: state_machine::Command,
 }
 
 impl ServerLogEntry {
-    #[allow(unused)] // TODO: use... need to refactor something first.
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
     pub fn term(&self) -> usize {
         self.term
     }
