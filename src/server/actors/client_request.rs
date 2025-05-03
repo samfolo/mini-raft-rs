@@ -33,7 +33,7 @@ pub async fn run_client_request_actor(
                 match msg {
                     client::Message::Request(req) => {
                         naive_logging::log(&server.id, &match req.body {
-                            client::ClientRequestBody::Read => format!("<- CLIENT_READ_CMD (req) {{ }}"),
+                            client::ClientRequestBody::Read => "<- CLIENT_READ_CMD (req) {{ }}".to_string(),
                             client::ClientRequestBody::Write { command } => format!("<- CLIENT_WRITE_CMD (req) {{ command: {command} }}")
                         });
 

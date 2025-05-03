@@ -28,7 +28,7 @@ impl ServerPeerList {
         let random_index = rand::random_range(..self.peer_list.len());
         let ids: Vec<_> = self.peer_list.keys().collect();
         let id = ids[random_index];
-        (id.clone(), self.peer_list.get(id).unwrap().clone())
+        (*id, self.peer_list.get(id).unwrap().clone())
     }
 
     pub fn peers_iter(

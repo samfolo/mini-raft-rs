@@ -15,7 +15,7 @@ pub async fn run_leader_actor(
     cancellation_token: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<()> {
     let mut state = server.state.clone();
-    let server_id = server.id.clone();
+    let server_id = server.id;
 
     let cancelled = cancellation_token.cancelled();
     tokio::pin!(cancelled);
@@ -97,7 +97,7 @@ pub async fn run_leader_actor(
                                 },
                                 server::ServerResponseBody::RequestVote { vote_granted } => {
                                     naive_logging::log(&server.id, &format!("<- REQUEST_VOTE (res) {{ term: {current_term}, vote_granted: {vote_granted} }}"));
-                                    naive_logging::log(&server.id, &format!("no longer campaigning; ignoring vote..."));
+                                    naive_logging::log(&server.id, "no longer campaigning; ignoring vote...");
                                 }
                             },
                         }

@@ -24,7 +24,7 @@ pub async fn run_inbound_actor(
             client::Message::Request(req) => {
                 match req.body {
                     client::ClientRequestBody::Read => {
-                        naive_logging::log(&client.id, &format!("<- CLIENT_READ_CMD (req) {{  }}"))
+                        naive_logging::log(&client.id, "<- CLIENT_READ_CMD (req) {{  }}")
                     }
                     client::ClientRequestBody::Write { command } => naive_logging::log(
                         &client.id,

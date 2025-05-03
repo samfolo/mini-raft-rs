@@ -19,7 +19,7 @@ pub async fn run_follower_actor(
     cancellation_token: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<()> {
     let mut state = server.state.clone();
-    let server_id = server.id.clone();
+    let server_id = server.id;
 
     let cancelled = cancellation_token.cancelled();
     tokio::pin!(cancelled);

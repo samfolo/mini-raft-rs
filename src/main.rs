@@ -22,11 +22,11 @@ async fn main() -> anyhow::Result<()> {
     let (tx5, rx5) = mpsc::channel(8);
 
     let mut init = HashMap::new();
-    init.insert(id1.clone(), server::ServerHandle::new(tx1));
-    init.insert(id2.clone(), server::ServerHandle::new(tx2));
-    init.insert(id3.clone(), server::ServerHandle::new(tx3));
-    init.insert(id4.clone(), server::ServerHandle::new(tx4));
-    init.insert(id5.clone(), server::ServerHandle::new(tx5));
+    init.insert(id1, server::ServerHandle::new(tx1));
+    init.insert(id2, server::ServerHandle::new(tx2));
+    init.insert(id3, server::ServerHandle::new(tx3));
+    init.insert(id4, server::ServerHandle::new(tx4));
+    init.insert(id5, server::ServerHandle::new(tx5));
 
     let peer_list = server::ServerPeerList::from(init);
 
@@ -71,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     clients.abort_all();
-    while let Some(_) = clients.join_next().await {
+    while clients.join_next().await.is_some() {
         println!("fin.");
     }
     Ok(())
