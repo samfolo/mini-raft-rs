@@ -26,6 +26,7 @@ pub async fn run_client_request_actor(
                 }
             }
             _ = &mut cancelled => {
+                naive_logging::log(&server.id, "shutting down client request handler...");
                 return Ok(())
             }
             Some(msg) = receiver.recv() => {

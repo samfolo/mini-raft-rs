@@ -6,6 +6,9 @@ use crate::{
     server::{self, Server, ServerState, request::ServerMessagePayload},
 };
 
+/// Once a leader has been elected, it begins servicing client requests. Each client request contains a command
+/// to be executed by the replicated state machines. The leader appends the command to its log as a new entry, then
+/// issues AppendEntries RPCs in parallel to each of the other servers to replicate the entry.
 pub async fn run_leader_actor(
     server: &Server,
     mut receiver: mpsc::Receiver<server::Message>,
@@ -54,6 +57,7 @@ pub async fn run_leader_actor(
                         break 'heartbeat;
                     }
                     _ = &mut cancelled => {
+                        naive_logging::log(&server.id, "shutting down leader routine...");
                         return Ok(())
                     }
                     Some(msg) = receiver.recv() => {
@@ -108,6 +112,7 @@ pub async fn run_leader_actor(
                 }
               }
               _ = &mut cancelled => {
+                naive_logging::log(&server.id, "shutting down leader routine...");
                 return Ok(())
               }
             }

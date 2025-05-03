@@ -47,6 +47,7 @@ pub async fn run_follower_actor(
                     }
                 }
                 _ = &mut cancelled => {
+                    naive_logging::log(&server.id, "shutting down follower routine...");
                     return Ok(())
                 }
                 Some(msg) = receiver.recv() => {
@@ -149,6 +150,7 @@ pub async fn run_follower_actor(
                     reset_timeout(&mut timeout);
                 }
                 _ = &mut cancelled => {
+                    naive_logging::log(&server.id, "shutting down follower routine...");
                     return Ok(())
                 }
             }

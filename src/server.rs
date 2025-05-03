@@ -43,10 +43,13 @@ pub struct Server {
     id: domain::node_id::NodeId,
     state: watch::Receiver<ServerState>,
     state_tx: watch::Sender<ServerState>,
+    #[allow(unused)]
     state_machine: state_machine::InMemoryStateMachine,
 
     // Persistent state:
     // -----------------------------------------------------
+    /// Each server stores a current term number, which increases
+    /// monotonically over time.
     current_term: RwLock<usize>,
     voted_for: RwLock<Option<node_id::NodeId>>,
 
@@ -171,11 +174,7 @@ impl Server {
     ) -> anyhow::Result<domain::node_id::NodeId> {
         naive_logging::log(&self.id, "running...");
 
-        let cancellation_token = CancellationToken::new();
-        let follower_cancel_tok = cancellation_token.clone();
-        let candidate_cancel_tok = cancellation_token.clone();
-        let leader_cancel_tok = cancellation_token.clone();
-        let client_request_cancel_tok = cancellation_token.clone();
+        let cancel_tok = CancellationToken::new();
 
         let (follower_tx, follower_rx) = mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
         let (candidate_tx, candidate_rx) = mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
@@ -192,10 +191,10 @@ impl Server {
                 leader_tx,
                 client_request_tx
             ),
-            actors::run_follower_actor(self, follower_rx, follower_cancel_tok),
-            actors::run_candidate_actor(self, candidate_rx, candidate_cancel_tok),
-            actors::run_leader_actor(self, leader_rx, leader_cancel_tok),
-            actors::run_client_request_actor(self, client_request_rx, client_request_cancel_tok)
+            actors::run_follower_actor(self, follower_rx, cancel_tok.clone()),
+            actors::run_candidate_actor(self, candidate_rx, cancel_tok.clone()),
+            actors::run_leader_actor(self, leader_rx, cancel_tok.clone()),
+            actors::run_client_request_actor(self, client_request_rx, cancel_tok.clone())
         )?;
 
         Ok(self.id)
@@ -210,11 +209,11 @@ impl Drop for Server {
 
 #[cfg(test)]
 mod tests {
-    use tokio::sync::mpsc;
+    // use tokio::sync::mpsc;
 
-    use super::*;
+    // use super::*;
 
-    const TEST_CHANNEL_CAPACITY: usize = 16;
+    // const TEST_CHANNEL_CAPACITY: usize = 16;
 
     // Actor model:
     // Has a mailbox into which it can ALWAYS receive messages
