@@ -141,14 +141,26 @@ impl ServerHandle {
         request: client::ClientRequest,
         forwarded: bool,
     ) -> anyhow::Result<(), mpsc::error::SendError<message::Message>> {
-        naive_logging::log(
-            &sender_id,
-            &format!(
-                "{} CLIENT_UPDATE_CMD (req) {{ body: {} }}",
-                if forwarded { ">>" } else { "->" },
-                request.body()
-            ),
-        );
+        match request.body {
+            client::ClientRequestBody::Read => {
+                naive_logging::log(
+                    &sender_id,
+                    &format!(
+                        "{} CLIENT_READ_CMD (req) {{ }}",
+                        if forwarded { ">>" } else { "->" },
+                    ),
+                );
+            }
+            client::ClientRequestBody::Write { command } => {
+                naive_logging::log(
+                    &sender_id,
+                    &format!(
+                        "{} CLIENT_WRITE_CMD (req) {{ command: {command} }}",
+                        if forwarded { ">>" } else { "->" },
+                    ),
+                );
+            }
+        }
 
         self.sender.send(request.into()).await?;
 

@@ -6,7 +6,7 @@ pub mod error;
 use error::ClientRequestError;
 
 pub use handle::ClientHandle;
-pub use request::{ClientRequest, ClientResponse, Message};
+pub use request::{ClientRequest, ClientRequestBody, ClientResponse, ClientResponseBody, Message};
 
 use tokio::{sync::mpsc, time};
 
@@ -80,18 +80,16 @@ impl RandomDataClient {
     async fn make_random_request(&self, tx: mpsc::Sender<request::Message>) -> self::Result<()> {
         let op = Self::OPS[rand::random_range(0..3) as usize];
         let state_key = Self::STATE_KEYS[rand::random_range(0..3) as usize];
-        let body = state_machine::Command::new(op, state_key, rand::random_range(0..=100));
-
-        naive_logging::log(
-            &self.id,
-            &format!("-> sending request to the cluster: {}", body),
-        );
+        let command = state_machine::Command::new(op, state_key, rand::random_range(0..=100));
 
         let (_, handle) = self.peer_list.random_peer();
         handle
             .handle_client_request(
                 &self.id,
-                ClientRequest::new(body, ClientHandle::new(tx)),
+                ClientRequest::new(
+                    request::ClientRequestBody::Write { command },
+                    ClientHandle::new(tx),
+                ),
                 false,
             )
             .await

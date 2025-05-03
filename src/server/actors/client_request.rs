@@ -32,13 +32,24 @@ pub async fn run_client_request_actor(
             Some(msg) = receiver.recv() => {
                 match msg {
                     client::Message::Request(req) => {
-                        naive_logging::log(&server.id, &format!("<- CLIENT_UPDATE_CMD (req) {{ body: {} }}", req.body()));
+                        naive_logging::log(&server.id, &match req.body {
+                            client::ClientRequestBody::Read => format!("<- CLIENT_READ_CMD (req) {{ }}"),
+                            client::ClientRequestBody::Write { command } => format!("<- CLIENT_WRITE_CMD (req) {{ command: {command} }}")
+                        });
+
                         if *state.borrow_and_update() == ServerState::Leader {
-                            server.append_to_log(*req.body());
-                            req.responder.handle_client_response(server.id, true, server.state_machine.get_snapshot()).await?;
+                            match req.body {
+                                client::ClientRequestBody::Read => {
+                                    req.responder.handle_client_read_response(server.id, server.state_machine.get_snapshot()).await?;
+                                },
+                                client::ClientRequestBody::Write { command } => {
+                                    server.append_to_log(command);
+                                    req.responder.handle_client_write_response(server.id, true).await?;
+                                }
+                            }
                         } else {
                             let leader_id = server.voted_for().unwrap();
-                            naive_logging::log(&server.id, &format!("forwarding to current leader... {{ leader_id: {leader_id} }}"));
+                            naive_logging::log(&server.id, &format!(">> forwarding to current leader... {{ leader_id: {leader_id} }}"));
 
                             let leader_handle = server.peer_list.get(&leader_id).unwrap();
                             leader_handle.handle_client_request(&server.id, req, true).await?;

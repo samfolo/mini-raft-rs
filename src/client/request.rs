@@ -24,37 +24,40 @@ impl From<ClientResponse> for Message {
 /// ClientRequest represents a request sent by a Client.
 #[derive(Debug, Clone)]
 pub struct ClientRequest {
-    pub body: state_machine::Command,
+    pub body: ClientRequestBody,
     pub responder: ClientHandle,
 }
 
 impl ClientRequest {
-    pub fn new(body: state_machine::Command, responder: ClientHandle) -> Self {
+    pub fn new(body: ClientRequestBody, responder: ClientHandle) -> Self {
         Self { body, responder }
     }
+}
 
-    pub fn body(&self) -> &state_machine::Command {
-        &self.body
-    }
+#[derive(Debug, Clone)]
+pub enum ClientRequestBody {
+    Read,
+    Write { command: state_machine::Command },
 }
 
 /// ClientResponse represents a response received from a Client.
 #[derive(Debug, Clone)]
 pub struct ClientResponse {
-    success: bool,
-    snapshot: state_machine::InMemoryStateMachineSnapshot,
+    body: ClientResponseBody,
 }
 
 impl ClientResponse {
-    pub fn new(success: bool, snapshot: state_machine::InMemoryStateMachineSnapshot) -> Self {
-        Self { success, snapshot }
+    pub fn new(body: ClientResponseBody) -> Self {
+        Self { body }
     }
+}
 
-    pub fn success(&self) -> bool {
-        self.success
-    }
-
-    pub fn snapshot(&self) -> &state_machine::InMemoryStateMachineSnapshot {
-        &self.snapshot
-    }
+#[derive(Debug, Clone)]
+pub enum ClientResponseBody {
+    Read {
+        snapshot: state_machine::InMemoryStateMachineSnapshot,
+    },
+    Write {
+        success: bool,
+    },
 }
