@@ -86,8 +86,8 @@ impl ServerHandle {
         naive_logging::log(
             &leader_id,
             &format!(
-                "-> APPEND_ENTRIES (req) {{ term: {}, leader_id: {}, entries: {:#?} }}",
-                current_term, leader_id, entries
+                "-> APPEND_ENTRIES (req) {{ term: {current_term}, leader_id: {leader_id}, entries: {:#?} }}",
+                entries
             ),
         );
 

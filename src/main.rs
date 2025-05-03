@@ -5,7 +5,7 @@ use mini_raft_rs::{
     domain::node_id,
     server,
 };
-use tokio::{sync::mpsc, time};
+use tokio::{sync::mpsc, task::JoinSet, time};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -46,11 +46,13 @@ async fn main() -> anyhow::Result<()> {
         .heartbeat_interval_ms(350)
         .election_timeout_range(751, 1200);
 
-    let client_activity = tokio::spawn(async move {
-        time::sleep(time::Duration::from_millis(2000)).await;
+    let mut clients = JoinSet::new();
 
+    let client_conn1 = peer_list.clone();
+    clients.spawn(async move {
+        time::sleep(time::Duration::from_millis(2000)).await;
         client::RandomDataClient::init()
-            .connect_to_cluster(peer_list.clone())
+            .connect_to_cluster(client_conn1)
             .run()
             .await
     });
@@ -64,13 +66,13 @@ async fn main() -> anyhow::Result<()> {
     )?;
 
     match tokio::signal::ctrl_c().await {
-        Ok(_) => {
-            client_activity.abort();
-            client_activity.await??;
-            println!("fin.")
-        }
+        Ok(_) => {}
         Err(err) => panic!("{err:?}"),
     };
 
+    clients.abort_all();
+    while let Some(_) = clients.join_next().await {
+        println!("fin.");
+    }
     Ok(())
 }

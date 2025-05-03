@@ -79,22 +79,35 @@ impl RandomDataClient {
     }
 
     async fn make_random_request(&self, tx: mpsc::Sender<request::Message>) -> self::Result<()> {
-        let op = Self::OPS[rand::random_range(0..3) as usize];
-        let state_key = Self::STATE_KEYS[rand::random_range(0..3) as usize];
-        let command = state_machine::Command::new(op, state_key, rand::random_range(0..=100));
-
         let (_, handle) = self.peer_list.random_peer();
-        handle
-            .handle_client_request(
-                &self.id,
-                ClientRequest::new(
-                    request::ClientRequestBody::Write { command },
-                    ClientHandle::new(tx),
-                ),
-                false,
-            )
-            .await
-            .map_err(|err| ClientRequestError::Unexpected(err.into()))?;
+
+        let make_read_request = rand::random_bool(0.25);
+        if make_read_request {
+            handle
+                .handle_client_request(
+                    &self.id,
+                    ClientRequest::new(request::ClientRequestBody::Read, ClientHandle::new(tx)),
+                    false,
+                )
+                .await
+                .map_err(|err| ClientRequestError::Unexpected(err.into()))?;
+        } else {
+            let op = Self::OPS[rand::random_range(0..3) as usize];
+            let state_key = Self::STATE_KEYS[rand::random_range(0..3) as usize];
+            let command = state_machine::Command::new(op, state_key, rand::random_range(0..=100));
+
+            handle
+                .handle_client_request(
+                    &self.id,
+                    ClientRequest::new(
+                        request::ClientRequestBody::Write { command },
+                        ClientHandle::new(tx),
+                    ),
+                    false,
+                )
+                .await
+                .map_err(|err| ClientRequestError::Unexpected(err.into()))?;
+        }
 
         Ok(())
     }

@@ -35,11 +35,11 @@ pub async fn run_candidate_actor(
             tokio::pin!(timeout);
 
             // Increment term
-            server.set_current_term(|prev| prev + 1);
-            let current_term = server.current_term();
+            server.set_current_term(|prev| prev + 1).await;
+            let current_term = server.current_term().await;
 
             // Vote for self
-            server.set_voted_for(Some(server_id));
+            server.set_voted_for(Some(server_id)).await;
 
             // Request votes from peers
             let mut join_set = JoinSet::new();
@@ -108,8 +108,8 @@ pub async fn run_candidate_actor(
                                                 &format!("acknowledging new leader... {{ current_term: {current_term}, request_term: {request_term}, leader_id: {leader_id} }}"),
                                             );
 
-                                            server.set_current_term(|_| request_term);
-                                            server.set_voted_for(Some(*leader_id));
+                                            server.set_current_term(|_| request_term).await;
+                                            server.set_voted_for(Some(*leader_id)).await;
                                             if let Err(err) = server.downgrade_to_follower() {
                                                 bail!("failed to downgrade to follower: {err:?}");
                                             }
@@ -138,8 +138,8 @@ pub async fn run_candidate_actor(
                                                 &format!("backing out of election... {{ current_term: {current_term}, request_term: {request_term}, candidate_id: {candidate_id} }}"),
                                             );
 
-                                            server.set_current_term(|_| request_term);
-                                            server.set_voted_for(Some(*candidate_id));
+                                            server.set_current_term(|_| request_term).await;
+                                            server.set_voted_for(Some(*candidate_id)).await;
                                             if let Err(err) = server.downgrade_to_follower() {
                                                 bail!("failed to downgrade to follower: {err:?}");
                                             }
@@ -157,13 +157,13 @@ pub async fn run_candidate_actor(
                             }
                             server::Message::Response(res) => match res.body() {
                                 server::ServerResponseBody::AppendEntries { success } => {
-                                    naive_logging::log(&server.id, &format!("<- APPEND_ENTRIES (res) {{ success: {success} }}"));
+                                    naive_logging::log(&server.id, &format!("<- APPEND_ENTRIES (res) {{ term: {current_term}, success: {success} }}"));
                                     unreachable!("should never have received this message");
                                 },
                                 server::ServerResponseBody::RequestVote { vote_granted } => {
                                     naive_logging::log(
                                         &server.id,
-                                        &format!("<- REQUEST_VOTE (res) {{ vote_granted: {vote_granted} }}"),
+                                        &format!("<- REQUEST_VOTE (res) {{ term: {current_term}, vote_granted: {vote_granted} }}"),
                                     );
 
                                     if *vote_granted {

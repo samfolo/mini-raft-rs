@@ -43,12 +43,12 @@ pub async fn run_client_request_actor(
                                     req.responder.handle_client_read_response(server.id, server.state_machine.get_snapshot()).await?;
                                 },
                                 client::ClientRequestBody::Write { command } => {
-                                    server.append_to_log(command);
+                                    server.append_to_log(command).await;
                                     req.responder.handle_client_write_response(server.id, true).await?;
                                 }
                             }
                         } else {
-                            let leader_id = server.voted_for().unwrap();
+                            let leader_id = server.voted_for().await.unwrap();
                             naive_logging::log(&server.id, &format!(">> forwarding to current leader... {{ leader_id: {leader_id} }}"));
 
                             let leader_handle = server.peer_list.get(&leader_id).unwrap();

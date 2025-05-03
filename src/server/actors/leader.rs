@@ -22,7 +22,7 @@ pub async fn run_leader_actor(
 
     loop {
         if *state.borrow_and_update() == ServerState::Leader {
-            let current_term = server.current_term();
+            let current_term = server.current_term().await;
 
             // timeout controls
             let timeout = time::sleep(server.heartbeat_interval);
@@ -90,13 +90,13 @@ pub async fn run_leader_actor(
                             }
                             server::Message::Response(res) => match res.body() {
                                 server::ServerResponseBody::AppendEntries { success } => {
-                                    naive_logging::log(&server.id, &format!("<- APPEND_ENTRIES (res) {{ success: {success} }}"));
+                                    naive_logging::log(&server.id, &format!("<- APPEND_ENTRIES (res) {{ term: {current_term}, success: {success} }}"));
                                     if *success {
                                         // track the commit tally vector here
                                     }
                                 },
                                 server::ServerResponseBody::RequestVote { vote_granted } => {
-                                    naive_logging::log(&server.id, &format!("<- REQUEST_VOTE (res) {{ vote_granted: {vote_granted} }}"));
+                                    naive_logging::log(&server.id, &format!("<- REQUEST_VOTE (res) {{ term: {current_term}, vote_granted: {vote_granted} }}"));
                                     naive_logging::log(&server.id, &format!("no longer campaigning; ignoring vote..."));
                                 }
                             },
