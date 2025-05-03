@@ -1,7 +1,11 @@
 use std::collections::HashMap;
 
-use mini_raft_rs::{domain::node_id, server};
-use tokio::sync::mpsc;
+use mini_raft_rs::{
+    client::{self, Client},
+    domain::node_id,
+    server,
+};
+use tokio::{sync::mpsc, task::JoinSet, time};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -26,11 +30,21 @@ async fn main() -> anyhow::Result<()> {
 
     let peer_list = server::ServerPeerList::from(init);
 
-    let server1 = server::Server::new(id1, peer_list.clone());
-    let server2 = server::Server::new(id2, peer_list.clone());
-    let server3 = server::Server::new(id3, peer_list.clone());
-    let server4 = server::Server::new(id4, peer_list.clone());
-    let server5 = server::Server::new(id5, peer_list.clone());
+    let server1 = server::Server::new(id1, peer_list.clone())
+        .heartbeat_interval_ms(350)
+        .election_timeout_range(751, 1200);
+    let server2 = server::Server::new(id2, peer_list.clone())
+        .heartbeat_interval_ms(350)
+        .election_timeout_range(751, 1200);
+    let server3 = server::Server::new(id3, peer_list.clone())
+        .heartbeat_interval_ms(350)
+        .election_timeout_range(751, 1200);
+    let server4 = server::Server::new(id4, peer_list.clone())
+        .heartbeat_interval_ms(350)
+        .election_timeout_range(751, 1200);
+    let server5 = server::Server::new(id5, peer_list.clone())
+        .heartbeat_interval_ms(350)
+        .election_timeout_range(751, 1200);
 
     tokio::try_join!(
         server1.run(rx1),
@@ -40,8 +54,21 @@ async fn main() -> anyhow::Result<()> {
         server5.run(rx5),
     )?;
 
+    let client_activity = tokio::spawn(async move {
+        time::sleep(time::Duration::from_millis(2000)).await;
+
+        client::RandomDataClient::init()
+            .connect_to_cluster(peer_list.clone())
+            .make_random_requests()
+            .await
+    });
+
     match tokio::signal::ctrl_c().await {
-        Ok(_) => println!("done"),
+        Ok(_) => {
+            client_activity.abort();
+            client_activity.await??;
+            println!("fin.")
+        }
         Err(err) => panic!("{err:?}"),
     };
 

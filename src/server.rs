@@ -69,9 +69,12 @@ pub struct Server {
 /// - `AppendEntries`
 impl Server {
     const DEFAULT_MESSAGE_BUFFER_SIZE: usize = 32;
+    const DEFAULT_HEARTBEAT_INTERVAL: time::Duration = time::Duration::from_millis(374);
+    const DEFAULT_ELECTION_TIMEOUT_RANGE: TimeoutRange = TimeoutRange::new(750, 1000);
 
     pub fn new(id: node_id::NodeId, mut peer_list: peer_list::ServerPeerList) -> Self {
         naive_logging::log(&id, "initialised.");
+
         peer_list.remove(&id);
 
         let (state_tx, state) = watch::channel(ServerState::Follower);
@@ -94,10 +97,21 @@ impl Server {
 
             // Cluster configuration:
             // -----------------------------------------------------
-            heartbeat_interval: time::Duration::from_millis(374),
-            election_timeout_range: TimeoutRange::new(750, 1000),
+            heartbeat_interval: Self::DEFAULT_HEARTBEAT_INTERVAL,
+            election_timeout_range: Self::DEFAULT_ELECTION_TIMEOUT_RANGE,
             peer_list,
         }
+    }
+
+    pub fn heartbeat_interval_ms(mut self, interval_ms: u64) -> Self {
+        self.heartbeat_interval = time::Duration::from_millis(interval_ms);
+        self
+    }
+
+    pub fn election_timeout_range(mut self, min: u64, max: u64) -> Self {
+        assert!(min < max);
+        self.election_timeout_range = TimeoutRange::new(min, max);
+        self
     }
 
     pub fn generate_random_timeout(&self) -> time::Duration {
