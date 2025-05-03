@@ -151,13 +151,16 @@ impl Server {
         let cancellation_token = CancellationToken::new();
         let follower_ctk = cancellation_token.clone();
         let candidate_ctk = cancellation_token.clone();
+        let client_request_ctk = cancellation_token.clone();
 
         let (follower_tx, follower_rx) = mpsc::channel(32);
         let (candidate_tx, candidate_rx) = mpsc::channel(32);
+        let (client_request_tx, client_request_rx) = mpsc::channel(32);
         tokio::join!(
-            actors::run_root_actor(self, rx, follower_tx, candidate_tx),
+            actors::run_root_actor(self, rx, follower_tx, candidate_tx, client_request_tx),
             actors::run_follower_actor(self, follower_rx, follower_ctk),
-            actors::run_candidate_actor(self, candidate_rx, candidate_ctk)
+            actors::run_candidate_actor(self, candidate_rx, candidate_ctk),
+            actors::run_client_request_actor(self, client_request_rx, client_request_ctk)
         );
 
         Ok(self.id)

@@ -11,6 +11,8 @@ use crate::{
     server::{self, Server, ServerState, request::ServerMessagePayload},
 };
 
+/// Followers are passive: they issue no requests on their own but simply
+/// respond to requests from leaders and candidates.
 pub async fn run_follower_actor(
     server: &Server,
     mut receiver: mpsc::Receiver<server::Message>,
@@ -42,7 +44,7 @@ pub async fn run_follower_actor(
               }
               res = state.changed() => {
                 if let Err(err) = res {
-                  bail!("{:?}", err);
+                  bail!("failed to read server state: {err:?}");
                 }
               }
               _ = &mut cancelled => {
@@ -90,10 +92,8 @@ pub async fn run_follower_actor(
               }
             }
         } else {
-            let mut state_changed = state.changed();
-
             tokio::select! {
-              res = state_changed => {
+              res = state.changed() => {
                 if let Err(err) = res {
                   bail!("{:?}", err);
                 }
