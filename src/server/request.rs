@@ -82,7 +82,7 @@ pub struct ServerResponseHeaders {
 /// ServerResponseBody represents the body of a ServerResponse
 #[derive(Clone, Debug)]
 pub enum ServerResponseBody {
-    AppendEntries {},
+    AppendEntries { success: bool },
     RequestVote { vote_granted: bool },
 }
 

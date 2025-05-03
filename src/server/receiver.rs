@@ -1,4 +1,3 @@
-use futures_util::{Stream, StreamExt};
 use tokio::sync::mpsc;
 
 use crate::message;

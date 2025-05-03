@@ -82,8 +82,11 @@ pub async fn run_follower_actor(
                                         naive_logging::log(
                                             &server.id,
                                             &format!(
-                                                "granting vote to candidate... {{ current_term: {current_term}, request_term: {request_term}, voted_for: {:?} }}",
-                                                server.voted_for(),
+                                                "granting vote to candidate... {{ current_term: {current_term}, request_term: {request_term}, voted_for: {} }}",
+                                                match server.voted_for() {
+                                                    Some(id) => format!("Some({id})"),
+                                                    None => "None".to_string()
+                                                },
                                             ),
                                         );
 
@@ -98,7 +101,10 @@ pub async fn run_follower_actor(
                                             &server.id,
                                             &format!(
                                                 "refusing vote for candidate... {{ current_term: {current_term}, request_term: {request_term}, voted_for: {:?} }}",
-                                                server.voted_for(),
+                                                match server.voted_for() {
+                                                    Some(id) => format!("Some({id})"),
+                                                    None => "None".to_string()
+                                                },
                                             ),
                                         );
 
@@ -108,8 +114,9 @@ pub async fn run_follower_actor(
                             }
                         }
                         server::Message::Response(res) => match res.body() {
-                            server::ServerResponseBody::AppendEntries {} => {
-                                naive_logging::log(&server.id, "<- APPEND_ENTRIES (res) { }");
+                            server::ServerResponseBody::AppendEntries { success } => {
+                                naive_logging::log(&server.id, &format!("<- APPEND_ENTRIES (res) {{ success: {success} }}"));
+                                unreachable!("should never have received this message");
                             }
                             server::ServerResponseBody::RequestVote { vote_granted } => {
                                 naive_logging::log(

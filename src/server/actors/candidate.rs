@@ -1,11 +1,5 @@
-use std::pin;
-
 use anyhow::bail;
-use tokio::{
-    sync::mpsc,
-    task::JoinSet,
-    time::{self, Sleep},
-};
+use tokio::{sync::mpsc, task::JoinSet, time};
 
 use crate::{
     naive_logging,
@@ -29,10 +23,6 @@ pub async fn run_candidate_actor(
             let timeout_dur = server.generate_random_timeout();
             let timeout = time::sleep(timeout_dur);
             tokio::pin!(timeout);
-
-            let reset_timeout = |timeout: &mut pin::Pin<&mut Sleep>| {
-                timeout.set(time::sleep(server.generate_random_timeout()))
-            };
 
             // increment term
             server.set_current_term(|prev| prev + 1);
@@ -85,36 +75,46 @@ pub async fn run_candidate_actor(
                                     server::ServerRequestBody::AppendEntries { leader_id, entries } => {
                                         naive_logging::log(
                                             &server.id,
-                                            &format!(
-                                                "<- APPEND_ENTRIES (req) {{ term: {request_term}, leader_id: {leader_id}, entries: {entries:?} }}"
-                                            ),
+                                            &format!("<- APPEND_ENTRIES (req) {{ term: {request_term}, leader_id: {leader_id}, entries: {entries:?} }}"),
                                         );
 
                                         let sender_handle = server.peer_list.get(&req.sender_id()).unwrap();
 
-                                        // verify terms then downgrade...
-                                        if let Err(err) = server.downgrade_to_follower() {
-                                            bail!("failed to downgrade to follower: {err:?}");
+                                        let success = request_term >= current_term;
+                                        if success {
+                                            naive_logging::log(
+                                                &server.id,
+                                                &format!("acknowledging new leader... {{ current_term: {current_term}, request_term: {request_term} }}"),
+                                            );
+
+                                            server.set_current_term(|_| request_term);
+                                            server.set_voted_for(Some(*leader_id));
+                                            if let Err(err) = server.downgrade_to_follower() {
+                                                bail!("failed to downgrade to follower: {err:?}");
+                                            }
+                                            sender_handle.append_entries_response(server_id, current_term, true).await?;
+                                        } else {
+                                            naive_logging::log(
+                                                &server.id,
+                                                &format!("ignoring stale request... {{ current_term: {current_term}, request_term: {request_term} }}"),
+                                            );
+
+                                            sender_handle.append_entries_response(server_id, current_term, false).await?;
                                         }
                                     }
                                     server::ServerRequestBody::RequestVote { candidate_id } => {
                                         naive_logging::log(
                                             &server.id,
-                                            &format!(
-                                                "<- REQUEST_VOTE (req) {{ term: {request_term}, candidate_id: {candidate_id} }}"
-                                            ),
+                                            &format!("<- REQUEST_VOTE (req) {{ term: {request_term}, candidate_id: {candidate_id} }}"),
                                         );
 
                                         let sender_handle = server.peer_list.get(&req.sender_id()).unwrap();
 
-                                        let vote_granted = request_term >= current_term && server.voted_for().is_none();
+                                        let vote_granted = request_term >= current_term;
                                         if vote_granted {
                                             naive_logging::log(
                                                 &server.id,
-                                                &format!(
-                                                    "granting vote to candidate... {{ current_term: {current_term}, request_term: {request_term}, voted_for: {:?} }}",
-                                                    server.voted_for(),
-                                                ),
+                                                &format!("backing out of election... {{ current_term: {current_term}, request_term: {request_term} }}"),
                                             );
 
                                             server.set_current_term(|_| request_term);
@@ -126,10 +126,7 @@ pub async fn run_candidate_actor(
                                         } else {
                                             naive_logging::log(
                                                 &server.id,
-                                                &format!(
-                                                    "refusing vote for candidate... {{ current_term: {current_term}, request_term: {request_term}, voted_for: {:?} }}",
-                                                    server.voted_for(),
-                                                ),
+                                                &format!("ignoring opposing candidate... {{ current_term: {current_term}, request_term: {request_term} }}"),
                                             );
 
                                             sender_handle.request_vote_response(server_id, current_term, false).await?;
@@ -138,12 +135,16 @@ pub async fn run_candidate_actor(
                                 }
                             }
                             server::Message::Response(res) => match res.body() {
-                                server::ServerResponseBody::AppendEntries {} => unreachable!(),
+                                server::ServerResponseBody::AppendEntries { success } => {
+                                    naive_logging::log(&server.id, &format!("<- APPEND_ENTRIES (res) {{ success: {success} }}"));
+                                    unreachable!("should never have received this message");
+                                },
                                 server::ServerResponseBody::RequestVote { vote_granted } => {
                                     naive_logging::log(
                                         &server.id,
                                         &format!("<- REQUEST_VOTE (res) {{ vote_granted: {vote_granted} }}"),
                                     );
+
                                     if *vote_granted {
                                         total_votes_over_term += 1;
 
@@ -158,9 +159,6 @@ pub async fn run_candidate_actor(
                                 }
                             },
                         }
-
-                        // decide when this happens:
-                        reset_timeout(&mut timeout);
                     }
                 }
             }

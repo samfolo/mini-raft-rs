@@ -84,7 +84,7 @@ impl ServerHandle {
         naive_logging::log(
             &leader_id,
             &format!(
-                "-> APPEND_ENTRIES {{ term: {}, leader_id: {}, entries: {:#?} }}",
+                "-> APPEND_ENTRIES (req) {{ term: {}, leader_id: {}, entries: {:#?} }}",
                 current_term, leader_id, entries
             ),
         );
@@ -97,6 +97,33 @@ impl ServerHandle {
                         node_id: leader_id,
                     },
                     request::ServerRequestBody::AppendEntries { leader_id, entries },
+                )
+                .into(),
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn append_entries_response(
+        &self,
+        responder_id: node_id::NodeId,
+        current_term: usize,
+        success: bool,
+    ) -> anyhow::Result<(), mpsc::error::SendError<message::Message>> {
+        naive_logging::log(
+            &responder_id,
+            &format!("-> APPEND_ENTRIES (res) {{ term: {current_term}, success: {success} }}"),
+        );
+
+        self.sender
+            .send(
+                request::ServerResponse::new(
+                    request::ServerResponseHeaders {
+                        term: current_term,
+                        node_id: responder_id,
+                    },
+                    request::ServerResponseBody::AppendEntries { success },
                 )
                 .into(),
             )
