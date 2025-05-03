@@ -18,19 +18,14 @@ pub async fn run_candidate_actor(
     tokio::pin!(cancelled);
 
     let request_vote_cb = async move |id: node_id::NodeId, handle: server::ServerHandle| {
-        if let Err(err) = handle
+        handle
             .request_vote(server.id.clone(), server.current_term())
             .await
-        {
-            bail!("failed to request vote: {err:?}")
-        }
-
-        Ok(())
+            .map_err(|err| anyhow::anyhow!("failed to request vote: {err:?}"))
     };
 
     loop {
         if *state.borrow_and_update() == ServerState::Candidate {
-            println!("{}: CANDIDATE", server.id);
             let timeout = server.generate_random_timeout();
 
             let mut join_set = JoinSet::new();
@@ -53,9 +48,6 @@ pub async fn run_candidate_actor(
             }
 
             let results = join_set.join_all().await;
-            for result in results {
-                println!("SENT: {result:?}");
-            }
 
             // Wait for a message, or a random timeout
             // If message, reset the random timeout

@@ -8,8 +8,8 @@ use tokio::{
 };
 
 use crate::{
-    message,
-    server::{self, Server, ServerState, receiver},
+    message, naive_logging,
+    server::{self, Server, ServerState, receiver, request::ServerMessagePayload},
 };
 
 pub async fn run_root_actor(
@@ -31,7 +31,44 @@ pub async fn run_root_actor(
 
     // need to forward messages to the right actor...
     while let Some(message) = stream.next().await {
-        println!("GOT: {message:?}");
+        match message {
+            message::Message::Server(server_msg) => match server_msg {
+                server::Message::Request(req) => {
+                    let request_term = req.term();
+
+                    match req.body() {
+                        server::ServerRequestBody::AppendEntries { leader_id, entries } => {
+                            naive_logging::log(
+                                &server.id,
+                                &format!(
+                                    "<- APPEND_ENTRIES (req) {{ term: {request_term}, leader_id: {leader_id}, entries: {entries:?} }}"
+                                ),
+                            );
+                        }
+                        server::ServerRequestBody::RequestVote { candidate_id } => {
+                            naive_logging::log(
+                                &server.id,
+                                &format!(
+                                    "<- REQUEST_VOTE (req) {{ term: {request_term}, candidate_id: {candidate_id} }}"
+                                ),
+                            );
+                        }
+                    }
+                }
+                server::Message::Response(res) => match res.body() {
+                    server::ServerResponseBody::AppendEntries {} => {
+                        naive_logging::log(&server.id, "<- APPEND_ENTRIES (res) { }");
+                    }
+                    server::ServerResponseBody::RequestVote { vote_granted } => {
+                        naive_logging::log(
+                            &server.id,
+                            &format!("<- REQUEST_VOTE (res) {{ vote_granted: {vote_granted} }}"),
+                        );
+                    }
+                },
+            },
+            m => println!("CLIENT: {m:?}"),
+        }
     }
 
     Ok(())

@@ -25,7 +25,7 @@ impl ServerHandle {
         naive_logging::log(
             &candidate_id,
             &format!(
-                "-> REQUEST_VOTE {{ term: {}, candidate_id: {} }}",
+                "-> REQUEST_VOTE (req) {{ term: {}, candidate_id: {} }}",
                 current_term, candidate_id
             ),
         );

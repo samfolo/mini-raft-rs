@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use mini_raft_rs::{client, domain::node_id, server};
+use mini_raft_rs::{domain::node_id, server};
 use tokio::sync::mpsc;
 
 #[tokio::main]
