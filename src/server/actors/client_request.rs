@@ -20,26 +20,26 @@ pub async fn run_client_request_actor(
 
     loop {
         tokio::select! {
-          res = state.changed() => {
-            if let Err(err) = res {
-              bail!("{:?}", err);
-            }
-          }
-          _ = &mut cancelled => {
-            return Ok(())
-          }
-          Some(msg) = receiver.recv() => {
-            match msg {
-                client::Message::Request(req) => {
-                    if *state.borrow_and_update() == ServerState::Leader {
-                      naive_logging::log(&server.id, &format!("<- CLIENT_REQUEST {{ body: {} }}", req.body()));
-                    } else {
-                      println!("FORWARDING_TO_LEADER: {req:?}");
-                    }
+            res = state.changed() => {
+                if let Err(err) = res {
+                    bail!("{:?}", err);
                 }
-                client::Message::Response(_) => unreachable!(),
             }
-          }
+            _ = &mut cancelled => {
+                return Ok(())
+            }
+            Some(msg) = receiver.recv() => {
+                match msg {
+                    client::Message::Request(req) => {
+                        if *state.borrow_and_update() == ServerState::Leader {
+                            naive_logging::log(&server.id, &format!("<- CLIENT_REQUEST {{ body: {} }}", req.body()));
+                        } else {
+                            println!("FORWARDING_TO_LEADER: {req:?}");
+                        }
+                    }
+                    client::Message::Response(_) => unreachable!(),
+                }
+            }
         }
     }
 }

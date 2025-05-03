@@ -19,6 +19,7 @@ pub async fn run_follower_actor(
     cancellation_token: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<()> {
     let mut state = server.state.clone();
+    let server_id = server.id.clone();
 
     let cancelled = cancellation_token.cancelled();
     tokio::pin!(cancelled);
@@ -33,76 +34,108 @@ pub async fn run_follower_actor(
 
     loop {
         if *state.borrow_and_update() == ServerState::Follower {
+            let current_term = server.current_term();
+
             // Wait for a message, or a random timeout
             // If message, reset the random timeout
             // else upgrade to candidate
             tokio::select! {
-              _ = &mut timeout => {
-                if let Err(err) = server.upgrade_to_candidate() {
-                  bail!("failed to upgrade to candidate: {err:?}");
-                }
-              }
-              res = state.changed() => {
-                if let Err(err) = res {
-                  bail!("failed to read server state: {err:?}");
-                }
-              }
-              _ = &mut cancelled => {
-                return Ok(())
-              }
-              Some(msg) = receiver.recv() => {
-                match msg {
-                    server::Message::Request(req) => {
-                        let request_term = req.term();
-
-                        match req.body() {
-                            server::ServerRequestBody::AppendEntries { leader_id, entries } => {
-                                naive_logging::log(
-                                    &server.id,
-                                    &format!(
-                                        "<- APPEND_ENTRIES (req) {{ term: {request_term}, leader_id: {leader_id}, entries: {entries:?} }}"
-                                    ),
-                                );
-                            }
-                            server::ServerRequestBody::RequestVote { candidate_id } => {
-                                naive_logging::log(
-                                    &server.id,
-                                    &format!(
-                                        "<- REQUEST_VOTE (req) {{ term: {request_term}, candidate_id: {candidate_id} }}"
-                                    ),
-                                );
-                            }
-                        }
+                _ = &mut timeout => {
+                    if let Err(err) = server.upgrade_to_candidate() {
+                        bail!("failed to upgrade to candidate: {err:?}");
                     }
-                    server::Message::Response(res) => match res.body() {
-                        server::ServerResponseBody::AppendEntries {} => {
-                            naive_logging::log(&server.id, "<- APPEND_ENTRIES (res) { }");
-                        }
-                        server::ServerResponseBody::RequestVote { vote_granted } => {
-                            naive_logging::log(
-                                &server.id,
-                                &format!("<- REQUEST_VOTE (res) {{ vote_granted: {vote_granted} }}"),
-                            );
-                        }
-                    },
                 }
+                res = state.changed() => {
+                    if let Err(err) = res {
+                        bail!("failed to read server state: {err:?}");
+                    }
+                }
+                _ = &mut cancelled => {
+                    return Ok(())
+                }
+                Some(msg) = receiver.recv() => {
+                    match msg {
+                        server::Message::Request(req) => {
+                            let request_term = req.term();
 
-                // decide when this happens:
-                reset_timeout(&mut timeout);
-              }
+                            match req.body() {
+                                server::ServerRequestBody::AppendEntries { leader_id, entries } => {
+                                    naive_logging::log(
+                                        &server.id,
+                                        &format!(
+                                            "<- APPEND_ENTRIES (req) {{ term: {request_term}, leader_id: {leader_id}, entries: {entries:?} }}"
+                                        ),
+                                    );
+                                }
+                                server::ServerRequestBody::RequestVote { candidate_id } => {
+                                    naive_logging::log(
+                                        &server.id,
+                                        &format!(
+                                            "<- REQUEST_VOTE (req) {{ term: {request_term}, candidate_id: {candidate_id} }}"
+                                        ),
+                                    );
+
+                                    let sender_handle = server.peer_list.get(&req.sender_id()).unwrap();
+
+                                    let vote_granted = request_term >= current_term && server.voted_for().is_none_or(|id| id == *candidate_id);
+                                    if vote_granted {
+                                        naive_logging::log(
+                                            &server.id,
+                                            &format!(
+                                                "granting vote to candidate... {{ current_term: {current_term}, request_term: {request_term}, voted_for: {:?} }}",
+                                                server.voted_for(),
+                                            ),
+                                        );
+
+                                        server.set_current_term(|_| request_term);
+                                        server.set_voted_for(Some(*candidate_id));
+                                        if let Err(err) = server.downgrade_to_follower() {
+                                            bail!("failed to downgrade to follower: {err:?}");
+                                        }
+                                        sender_handle.request_vote_response(server_id, current_term, true).await?;
+                                    } else {
+                                        naive_logging::log(
+                                            &server.id,
+                                            &format!(
+                                                "refusing vote for candidate... {{ current_term: {current_term}, request_term: {request_term}, voted_for: {:?} }}",
+                                                server.voted_for(),
+                                            ),
+                                        );
+
+                                        sender_handle.request_vote_response(server_id, current_term, false).await?;
+                                    }
+                                }
+                            }
+                        }
+                        server::Message::Response(res) => match res.body() {
+                            server::ServerResponseBody::AppendEntries {} => {
+                                naive_logging::log(&server.id, "<- APPEND_ENTRIES (res) { }");
+                            }
+                            server::ServerResponseBody::RequestVote { vote_granted } => {
+                                naive_logging::log(
+                                    &server.id,
+                                    &format!("<- REQUEST_VOTE (res) {{ vote_granted: {vote_granted} }}"),
+                                );
+                            }
+                        },
+                    }
+
+                    // decide when this happens:
+                    reset_timeout(&mut timeout);
+                }
             }
         } else {
             tokio::select! {
-              res = state.changed() => {
-                if let Err(err) = res {
-                  bail!("{:?}", err);
-                }
+                res = state.changed() => {
+                    if let Err(err) = res {
+                        bail!("{:?}", err);
+                    }
 
-                reset_timeout(&mut timeout);
-              }
-              _ = &mut cancelled => {
-                return Ok(())
-              }
+                    reset_timeout(&mut timeout);
+                }
+                _ = &mut cancelled => {
+                    return Ok(())
+                }
             }
         }
     }

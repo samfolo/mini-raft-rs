@@ -44,6 +44,35 @@ impl ServerHandle {
         Ok(())
     }
 
+    pub async fn request_vote_response(
+        &self,
+        responder_id: node_id::NodeId,
+        current_term: usize,
+        vote_granted: bool,
+    ) -> anyhow::Result<(), mpsc::error::SendError<message::Message>> {
+        naive_logging::log(
+            &responder_id,
+            &format!(
+                "-> REQUEST_VOTE (res) {{ term: {current_term}, vote_granted: {vote_granted} }}",
+            ),
+        );
+
+        self.sender
+            .send(
+                request::ServerResponse::new(
+                    request::ServerResponseHeaders {
+                        term: current_term,
+                        node_id: responder_id,
+                    },
+                    request::ServerResponseBody::RequestVote { vote_granted },
+                )
+                .into(),
+            )
+            .await?;
+
+        Ok(())
+    }
+
     /// `AppendEntries` RPCs are initiated by leaders to replicate log entries
     /// and to provide a form of heartbeat.
     pub async fn append_entries(

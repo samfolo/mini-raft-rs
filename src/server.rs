@@ -13,6 +13,7 @@ pub use request::{
     ServerResponseBody, ServerResponseHeaders,
 };
 
+use std::sync::RwLock;
 use tokio::{
     sync::{mpsc, watch},
     time,
@@ -46,7 +47,8 @@ pub struct Server {
 
     // Persistent state:
     // -----------------------------------------------------
-    current_term: usize,
+    current_term: RwLock<usize>,
+    voted_for: RwLock<Option<node_id::NodeId>>,
 
     // Volatile state:
     // -----------------------------------------------------
@@ -81,7 +83,8 @@ impl Server {
 
             // Persistent state:
             // -----------------------------------------------------
-            current_term: 0,
+            current_term: RwLock::new(0),
+            voted_for: RwLock::new(None),
 
             // Volatile state:
             // -----------------------------------------------------
@@ -99,7 +102,31 @@ impl Server {
     }
 
     pub fn current_term(&self) -> usize {
-        self.current_term
+        match self.current_term.read() {
+            Ok(val) => *val,
+            Err(err) => panic!("failed to read current_term: {err:?}"),
+        }
+    }
+
+    pub fn set_current_term(&self, setter: impl FnOnce(usize) -> usize) {
+        match self.current_term.write() {
+            Ok(mut val) => *val = setter(*val),
+            Err(err) => panic!("failed to modify current_term: {err:?}"),
+        }
+    }
+
+    pub fn voted_for(&self) -> Option<node_id::NodeId> {
+        match self.voted_for.read() {
+            Ok(val) => *val,
+            Err(err) => panic!("failed to read voted_for: {err:?}"),
+        }
+    }
+
+    pub fn set_voted_for(&self, candidate_id: Option<node_id::NodeId>) {
+        match self.voted_for.write() {
+            Ok(mut val) => *val = candidate_id,
+            Err(err) => panic!("failed to modify voted_for: {err:?}"),
+        }
     }
 
     /// If a candidate or leader discovers that its term is out of date, it
