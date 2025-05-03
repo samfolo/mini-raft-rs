@@ -1,5 +1,3 @@
-#![allow(unused)] // TODO: use... need to refactor something first.
-
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
