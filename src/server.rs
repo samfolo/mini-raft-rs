@@ -43,7 +43,6 @@ pub struct Server {
     id: domain::node_id::NodeId,
     state: watch::Receiver<ServerState>,
     state_tx: watch::Sender<ServerState>,
-    #[allow(unused)]
     state_machine: state_machine::InMemoryStateMachine,
 
     // Persistent state:
@@ -52,6 +51,7 @@ pub struct Server {
     /// monotonically over time.
     current_term: RwLock<usize>,
     voted_for: RwLock<Option<node_id::NodeId>>,
+    log: log::ServerLog,
 
     // Volatile state:
     // -----------------------------------------------------
@@ -91,6 +91,7 @@ impl Server {
             // -----------------------------------------------------
             current_term: RwLock::new(0),
             voted_for: RwLock::new(None),
+            log: log::ServerLog::default(),
 
             // Volatile state:
             // -----------------------------------------------------
@@ -178,6 +179,11 @@ impl Server {
         }
 
         Ok(())
+    }
+
+    fn append_to_log(&self, command: state_machine::Command) {
+        self.log
+            .append_cmd(self.log.len() + 1, self.current_term(), command);
     }
 }
 

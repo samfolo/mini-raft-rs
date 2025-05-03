@@ -32,11 +32,10 @@ pub async fn run_client_request_actor(
             Some(msg) = receiver.recv() => {
                 match msg {
                     client::Message::Request(req) => {
-                        naive_logging::log(&server.id, &format!("<- CLIENT_REQUEST {{ body: {} }}", req.body()));
+                        naive_logging::log(&server.id, &format!("<- CLIENT_COMMAND (req) {{ body: {} }}", req.body()));
                         if *state.borrow_and_update() == ServerState::Leader {
-                            naive_logging::log(&server.id, &format!("handling..."));
-
-                            todo!("handle client requests");
+                            server.append_to_log(*req.body());
+                            // TODO: Connect server to client
                         } else {
                             let leader_id = server.voted_for().unwrap();
                             naive_logging::log(&server.id, &format!("forwarding to current leader... {{ leader_id: {leader_id} }}"));
@@ -45,7 +44,7 @@ pub async fn run_client_request_actor(
                             leader_handle.handle_client_request(&server.id, *req.body()).await?;
                         }
                     }
-                    client::Message::Response(_) => unreachable!(),
+                    client::Message::Response(_) => unreachable!("should never have received this message"),
                 }
             }
         }

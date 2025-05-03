@@ -142,7 +142,7 @@ impl ServerHandle {
     ) -> anyhow::Result<(), mpsc::error::SendError<message::Message>> {
         naive_logging::log(
             &sender_id,
-            &format!("-> CLIENT_REQUEST {{ body: {} }}", body),
+            &format!("-> CLIENT_COMMAND (req) {{ body: {} }}", body),
         );
 
         self.sender

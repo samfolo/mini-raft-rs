@@ -1,7 +1,7 @@
 use crate::state_machine;
 
 /// Message represents a message sent from or received by a Client.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Message {
     Request(ClientRequest),
     Response(ClientResponse),
@@ -24,17 +24,22 @@ impl ClientRequest {
 }
 
 /// ClientResponse represents a response received from a Client.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ClientResponse {
     success: bool,
+    snapshot: state_machine::InMemoryStateMachineSnapshot,
 }
 
 impl ClientResponse {
-    pub fn new(success: bool) -> Self {
-        Self { success }
+    pub fn new(success: bool, snapshot: state_machine::InMemoryStateMachineSnapshot) -> Self {
+        Self { success, snapshot }
     }
 
     pub fn success(&self) -> bool {
         self.success
+    }
+
+    pub fn snapshot(&self) -> &state_machine::InMemoryStateMachineSnapshot {
+        &self.snapshot
     }
 }

@@ -96,8 +96,8 @@ pub async fn run_leader_actor(
                                     }
                                 },
                                 server::ServerResponseBody::RequestVote { vote_granted } => {
-                                  naive_logging::log(&server.id, &format!("<- REQUEST_VOTE (res) {{ vote_granted: {vote_granted} }}"));
-                                  unreachable!("should never have received this message");
+                                    naive_logging::log(&server.id, &format!("<- REQUEST_VOTE (res) {{ vote_granted: {vote_granted} }}"));
+                                    naive_logging::log(&server.id, &format!("no longer campaigning; ignoring vote..."));
                                 }
                             },
                         }

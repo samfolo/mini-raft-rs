@@ -46,14 +46,6 @@ async fn main() -> anyhow::Result<()> {
         .heartbeat_interval_ms(350)
         .election_timeout_range(751, 1200);
 
-    tokio::try_join!(
-        server1.run(rx1),
-        server2.run(rx2),
-        server3.run(rx3),
-        server4.run(rx4),
-        server5.run(rx5),
-    )?;
-
     let client_activity = tokio::spawn(async move {
         time::sleep(time::Duration::from_millis(2000)).await;
 
@@ -62,6 +54,14 @@ async fn main() -> anyhow::Result<()> {
             .make_random_requests()
             .await
     });
+
+    tokio::try_join!(
+        server1.run(rx1),
+        server2.run(rx2),
+        server3.run(rx3),
+        server4.run(rx4),
+        server5.run(rx5),
+    )?;
 
     match tokio::signal::ctrl_c().await {
         Ok(_) => {
