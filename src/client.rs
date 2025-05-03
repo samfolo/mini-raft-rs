@@ -1,5 +1,6 @@
 mod actors;
 mod handle;
+mod receiver;
 mod request;
 
 pub mod error;
@@ -9,12 +10,11 @@ use error::ClientRequestError;
 pub use handle::ClientHandle;
 pub use request::{ClientRequest, ClientRequestBody, ClientResponse, ClientResponseBody, Message};
 
-use tokio::{sync::mpsc, time};
+use tokio::sync::mpsc;
 
 use crate::{
     naive_logging, server,
     state_machine::{self, Op, StateKey},
-    timeout,
 };
 
 pub type Result<T> = anyhow::Result<T, error::ClientRequestError>;
@@ -100,9 +100,12 @@ impl RandomDataClient {
     }
 
     pub async fn run(self) -> Result<String> {
-        let (publisher, mut receiver) = mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
+        let (publisher, receiver) = mpsc::channel(Self::DEFAULT_MESSAGE_BUFFER_SIZE);
 
-        tokio::try_join!(actors::run_outbound_actor(&self, publisher))?;
+        tokio::try_join!(
+            actors::run_outbound_actor(&self, publisher),
+            actors::run_inbound_actor(&self, receiver)
+        )?;
 
         Ok(self.id)
     }

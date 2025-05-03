@@ -43,7 +43,7 @@ pub enum ClientRequestBody {
 /// ClientResponse represents a response received from a Client.
 #[derive(Debug, Clone)]
 pub struct ClientResponse {
-    body: ClientResponseBody,
+    pub body: ClientResponseBody,
 }
 
 impl ClientResponse {
