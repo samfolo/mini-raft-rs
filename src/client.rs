@@ -84,7 +84,7 @@ impl RandomDataClient {
         );
 
         let (_, handle) = self.peer_list.random_peer();
-        if let Err(err) = handle.handle_client_request(self.id.clone(), body).await {
+        if let Err(err) = handle.handle_client_request(&self.id, body).await {
             return Err(ClientRequestError::Unexpected(err.into()));
         }
 

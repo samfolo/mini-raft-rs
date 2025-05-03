@@ -20,8 +20,7 @@ pub async fn run_candidate_actor(
     loop {
         if *state.borrow_and_update() == ServerState::Candidate {
             // timeout controls
-            let timeout_dur = server.generate_random_timeout();
-            let timeout = time::sleep(timeout_dur);
+            let timeout = time::sleep(server.generate_random_timeout());
             tokio::pin!(timeout);
 
             // increment term
@@ -84,7 +83,7 @@ pub async fn run_candidate_actor(
                                         if success {
                                             naive_logging::log(
                                                 &server.id,
-                                                &format!("acknowledging new leader... {{ current_term: {current_term}, request_term: {request_term} }}"),
+                                                &format!("acknowledging new leader... {{ current_term: {current_term}, request_term: {request_term}, leader_id: {leader_id} }}"),
                                             );
 
                                             server.set_current_term(|_| request_term);
@@ -96,7 +95,7 @@ pub async fn run_candidate_actor(
                                         } else {
                                             naive_logging::log(
                                                 &server.id,
-                                                &format!("ignoring stale request... {{ current_term: {current_term}, request_term: {request_term} }}"),
+                                                &format!("ignoring request from stale leader... {{ current_term: {current_term}, request_term: {request_term}, leader_id: {leader_id} }}"),
                                             );
 
                                             sender_handle.append_entries_response(server_id, current_term, false).await?;
@@ -114,7 +113,7 @@ pub async fn run_candidate_actor(
                                         if vote_granted {
                                             naive_logging::log(
                                                 &server.id,
-                                                &format!("backing out of election... {{ current_term: {current_term}, request_term: {request_term} }}"),
+                                                &format!("backing out of election... {{ current_term: {current_term}, request_term: {request_term}, candidate_id: {candidate_id} }}"),
                                             );
 
                                             server.set_current_term(|_| request_term);
@@ -126,7 +125,7 @@ pub async fn run_candidate_actor(
                                         } else {
                                             naive_logging::log(
                                                 &server.id,
-                                                &format!("ignoring opposing candidate... {{ current_term: {current_term}, request_term: {request_term} }}"),
+                                                &format!("ignoring opposing candidate... {{ current_term: {current_term}, request_term: {request_term}, candidate_id: {candidate_id} }}"),
                                             );
 
                                             sender_handle.request_vote_response(server_id, current_term, false).await?;

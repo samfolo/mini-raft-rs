@@ -1,3 +1,5 @@
+use std::fmt;
+
 use tokio::sync::mpsc;
 
 use crate::{client, domain::node_id, message, naive_logging, state_machine};
@@ -135,11 +137,11 @@ impl ServerHandle {
     /// ...
     pub async fn handle_client_request(
         &self,
-        client_id: String,
+        sender_id: &impl fmt::Display,
         body: state_machine::Command,
     ) -> anyhow::Result<(), mpsc::error::SendError<message::Message>> {
         naive_logging::log(
-            &client_id,
+            &sender_id,
             &format!("-> CLIENT_REQUEST {{ body: {} }}", body),
         );
 

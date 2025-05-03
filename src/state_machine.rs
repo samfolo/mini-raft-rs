@@ -95,7 +95,7 @@ impl fmt::Display for Op {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Command {
     op: Op,
     key: StateKey,

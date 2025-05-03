@@ -24,8 +24,7 @@ pub async fn run_follower_actor(
     let cancelled = cancellation_token.cancelled();
     tokio::pin!(cancelled);
 
-    let timeout_dur = server.generate_random_timeout();
-    let timeout = time::sleep(timeout_dur);
+    let timeout = time::sleep(server.generate_random_timeout());
     tokio::pin!(timeout);
 
     let reset_timeout = |timeout: &mut pin::Pin<&mut Sleep>| {
@@ -36,9 +35,6 @@ pub async fn run_follower_actor(
         if *state.borrow_and_update() == ServerState::Follower {
             let current_term = server.current_term();
 
-            // Wait for a message, or a random timeout
-            // If message, reset the random timeout
-            // else upgrade to candidate
             tokio::select! {
                 _ = &mut timeout => {
                     if let Err(err) = server.upgrade_to_candidate() {
@@ -66,6 +62,29 @@ pub async fn run_follower_actor(
                                             "<- APPEND_ENTRIES (req) {{ term: {request_term}, leader_id: {leader_id}, entries: {entries:?} }}"
                                         ),
                                     );
+
+                                    let sender_handle = server.peer_list.get(&req.sender_id()).unwrap();
+
+                                    let success = request_term >= current_term;
+                                    if success {
+                                        if server.voted_for().is_none_or(|id| id != *leader_id) {
+                                            naive_logging::log(
+                                                &server.id,
+                                                &format!("acknowledging new leader... {{ current_term: {current_term}, request_term: {request_term}, leader_id: {leader_id} }}"),
+                                            );
+                                        }
+                                        server.set_voted_for(Some(*leader_id));
+
+                                        server.set_current_term(|_| request_term);
+                                        sender_handle.append_entries_response(server_id, current_term, true).await?;
+                                    } else {
+                                        naive_logging::log(
+                                            &server.id,
+                                            &format!("ignoring request from stale leader... {{ current_term: {current_term}, request_term: {request_term}, leader_id: {leader_id} }}"),
+                                        );
+
+                                        sender_handle.append_entries_response(server_id, current_term, false).await?;
+                                    }
                                 }
                                 server::ServerRequestBody::RequestVote { candidate_id } => {
                                     naive_logging::log(
@@ -79,17 +98,6 @@ pub async fn run_follower_actor(
 
                                     let vote_granted = request_term >= current_term && server.voted_for().is_none_or(|id| id == *candidate_id);
                                     if vote_granted {
-                                        naive_logging::log(
-                                            &server.id,
-                                            &format!(
-                                                "granting vote to candidate... {{ current_term: {current_term}, request_term: {request_term}, voted_for: {} }}",
-                                                match server.voted_for() {
-                                                    Some(id) => format!("Some({id})"),
-                                                    None => "None".to_string()
-                                                },
-                                            ),
-                                        );
-
                                         server.set_current_term(|_| request_term);
                                         server.set_voted_for(Some(*candidate_id));
                                         if let Err(err) = server.downgrade_to_follower() {
