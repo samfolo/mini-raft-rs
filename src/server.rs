@@ -4,6 +4,7 @@ mod log;
 mod peer_list;
 mod receiver;
 mod request;
+mod volatile_leader_state;
 
 pub use handle::ServerHandle;
 pub use log::ServerLogEntry;
@@ -49,11 +50,27 @@ pub struct Server {
     /// Each server stores a current term number, which increases
     /// monotonically over time.
     current_term: RwLock<usize>,
+    /// candidateId that received vote in current term (or null
+    /// if none)
     voted_for: RwLock<Option<node_id::NodeId>>,
+    /// log entries; each entry contains command for state
+    /// machine, and term when entry was received by leader.
+    /// (first index is 1)
     log: log::ServerLog,
 
     // Volatile state:
     // -----------------------------------------------------
+    /// index of highest log entry known to be committed
+    /// (initialized to 0, increases monotonically)
+    commit_index: RwLock<usize>,
+    /// index of highest log entry applied to state machine
+    /// (initialized to 0, increases monotonically)
+    last_applied: RwLock<usize>,
+
+    // Volatile state on leaders:
+    // -----------------------------------------------------
+    /// Reinitialised after every successful election
+    leader_state: RwLock<Option<volatile_leader_state::VolatileLeaderState>>,
 
     // Cluster configuration:
     // -----------------------------------------------------
@@ -94,6 +111,12 @@ impl Server {
 
             // Volatile state:
             // -----------------------------------------------------
+            commit_index: RwLock::new(0),
+            last_applied: RwLock::new(0),
+
+            // Volatile state on leaders:
+            // -----------------------------------------------------
+            leader_state: RwLock::new(None),
 
             // Cluster configuration:
             // -----------------------------------------------------
