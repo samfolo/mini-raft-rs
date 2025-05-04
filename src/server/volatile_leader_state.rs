@@ -28,16 +28,16 @@ impl VolatileLeaderState {
         *self.next_indices.get(id).unwrap()
     }
 
-    pub fn insert_next_index(&mut self, id: node_id::NodeId, index: usize) -> Option<usize> {
-        self.next_indices.insert(id, index)
+    pub fn decrement_next_index(&mut self, id: node_id::NodeId) {
+        self.next_indices.entry(id).and_modify(|index| *index -= 1);
     }
 
     pub fn get_match_index(&self, id: &node_id::NodeId) -> usize {
         *self.match_indices.get(id).unwrap()
     }
 
-    pub fn insert_match_index(&mut self, id: node_id::NodeId, index: usize) -> Option<usize> {
-        self.match_indices.insert(id, index)
+    pub fn decrement_match_index(&mut self, id: node_id::NodeId) {
+        self.match_indices.entry(id).and_modify(|index| *index -= 1);
     }
 
     pub fn highest_committable_index(&self) -> Option<usize> {
@@ -87,23 +87,29 @@ mod tests {
         next_indices: &[usize],
         expected: Option<usize>,
     ) -> anyhow::Result<()> {
-        assert!(next_indices.iter().all(|index| *index > 0));
+        let max = next_indices.iter().max().unwrap_or(&0);
+        assert!(next_indices.iter().all(|index| *index > 0 && index <= max));
 
         let mut ids = Vec::with_capacity(next_indices.len());
         for _ in 0..ids.capacity() {
             ids.push(node_id::NodeId::new());
         }
 
-        let mut volatile_state = VolatileLeaderState::new(ids.clone().into_iter(), 0);
+        let mut volatile_state = VolatileLeaderState::new(ids.clone().into_iter(), *max);
         next_indices.iter().enumerate().for_each(|(i, index)| {
-            volatile_state.insert_next_index(ids[i], *index);
+            // Only way to get each nextIndex to the correct value, as there are no
+            // accessible setters in the API.
+            while volatile_state.get_next_index(&ids[i]) > *index {
+                volatile_state.decrement_next_index(ids[i]);
+            }
         });
 
         let actual = volatile_state.highest_committable_index();
 
         assert_eq!(
             expected, actual,
-            "expected answer {expected:?} for {next_indices:?}, got {actual:?}"
+            "expected answer {expected:?} for {next_indices:?}, got {actual:?}. {:?}",
+            volatile_state.next_indices
         );
 
         Ok(())

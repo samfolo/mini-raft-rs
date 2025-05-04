@@ -56,7 +56,13 @@ pub async fn run_follower_actor(
                             let request_term = req.term();
 
                             match req.body() {
-                                server::ServerRequestBody::AppendEntries { leader_id, entries } => {
+                                server::ServerRequestBody::AppendEntries {
+                                    leader_id,
+                                    prev_log_index,
+                                    prev_log_term,
+                                    entries,
+                                    leader_commit,
+                                } => {
                                     naive_logging::log(
                                         &server.id,
                                         &format!(

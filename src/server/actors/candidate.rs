@@ -89,7 +89,13 @@ pub async fn run_candidate_actor(
                                     // While waiting for votes, a candidate may receive an AppendEntries RPC from another server
                                     // claiming to be leader.
 
-                                    server::ServerRequestBody::AppendEntries { leader_id, entries } => {
+                                    server::ServerRequestBody::AppendEntries {
+                                        leader_id,
+                                        prev_log_index,
+                                        prev_log_term,
+                                        entries,
+                                        leader_commit,
+                                    } => {
                                         naive_logging::log(
                                             &server.id,
                                             &format!("<- APPEND_ENTRIES (req) {{ \

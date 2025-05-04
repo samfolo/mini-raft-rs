@@ -28,22 +28,37 @@ pub async fn run_leader_actor(
             let timeout = time::sleep(server.heartbeat_interval);
             tokio::pin!(timeout);
 
+            let leader_commit = server.commit_index().await;
+
             // append entries to followers
             let mut join_set = JoinSet::new();
-            for (_, peer_handle) in server.peer_list.peers_iter() {
+            for (peer_id, peer_handle) in server.peer_list.peers_iter() {
                 let peer_handle = peer_handle.clone();
+
+                let peer_next_index = match server.get_next_index_for_peer(&peer_id).await {
+                    Some(index) => index,
+                    None => bail!("failed to get next index for peer with ID {peer_id}"),
+                };
+
+                let prev_log_index = 0;
+                let prev_log_term = 0;
 
                 join_set.spawn(async move {
                     peer_handle
-                        .append_entries(server_id, current_term, vec![])
+                        .append_entries(
+                            server_id,
+                            prev_log_index,
+                            prev_log_term,
+                            vec![],
+                            leader_commit,
+                            current_term,
+                        )
                         .await
                         .map_err(|err| anyhow::anyhow!("failed to append entries: {err:?}"))
                 });
             }
 
             let _ = join_set.join_all().await;
-
-            // commit tally
 
             'heartbeat: loop {
                 tokio::select! {
@@ -66,7 +81,13 @@ pub async fn run_leader_actor(
                                 let request_term = req.term();
 
                                 match req.body() {
-                                    server::ServerRequestBody::AppendEntries { leader_id, entries } => {
+                                    server::ServerRequestBody::AppendEntries {
+                                        leader_id,
+                                        prev_log_index,
+                                        prev_log_term,
+                                        entries,
+                                        leader_commit,
+                                    } => {
                                         naive_logging::log(
                                             &server.id,
                                             &format!(

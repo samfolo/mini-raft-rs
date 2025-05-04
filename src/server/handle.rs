@@ -80,8 +80,11 @@ impl ServerHandle {
     pub async fn append_entries(
         &self,
         leader_id: node_id::NodeId,
-        current_term: usize,
+        prev_log_index: usize,
+        prev_log_term: usize,
         entries: Vec<log::ServerLogEntry>,
+        leader_commit: usize,
+        current_term: usize,
     ) -> anyhow::Result<(), mpsc::error::SendError<message::Message>> {
         naive_logging::log(
             &leader_id,
@@ -98,7 +101,13 @@ impl ServerHandle {
                         term: current_term,
                         node_id: leader_id,
                     },
-                    request::ServerRequestBody::AppendEntries { leader_id, entries },
+                    request::ServerRequestBody::AppendEntries {
+                        leader_id,
+                        prev_log_index,
+                        prev_log_term,
+                        entries,
+                        leader_commit,
+                    },
                 )
                 .into(),
             )

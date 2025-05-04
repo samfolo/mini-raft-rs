@@ -162,6 +162,15 @@ impl Server {
         *val = candidate_id
     }
 
+    pub async fn commit_index(&self) -> usize {
+        *self.commit_index.read().await
+    }
+
+    pub async fn set_commit_index(&self, candidate_id: usize) {
+        let mut val = self.commit_index.write().await;
+        *val = candidate_id
+    }
+
     /// If a candidate or leader discovers that its term is out of date, it
     /// immediately reverts to follower state.
     fn downgrade_to_follower(&self) -> Result<(), watch::error::SendError<ServerState>> {
@@ -210,13 +219,12 @@ impl Server {
             .unwrap_or(None)
     }
 
-    async fn insert_next_index_for_peer(&self, id: node_id::NodeId, index: usize) -> Option<usize> {
+    async fn decrement_next_index_for_peer(&self, id: node_id::NodeId) {
         self.leader_state
             .write()
             .await
             .as_mut()
-            .map(|leader_state| leader_state.insert_next_index(id, index))
-            .unwrap_or(None)
+            .map_or((), |leader_state| leader_state.decrement_next_index(id))
     }
 
     async fn get_match_index_for_peer(&self, id: &node_id::NodeId) -> Option<usize> {
@@ -228,17 +236,12 @@ impl Server {
             .unwrap_or(None)
     }
 
-    async fn insert_match_index_for_peer(
-        &self,
-        id: node_id::NodeId,
-        index: usize,
-    ) -> Option<usize> {
+    async fn decrement_match_index_for_peer(&self, id: node_id::NodeId) {
         self.leader_state
             .write()
             .await
             .as_mut()
-            .map(|leader_state| leader_state.insert_match_index(id, index))
-            .unwrap_or(None)
+            .map_or((), |leader_state| leader_state.decrement_match_index(id))
     }
 
     async fn highest_committable_index(&self) -> Option<usize> {

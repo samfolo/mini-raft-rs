@@ -46,10 +46,15 @@ pub enum ServerRequestBody {
     AppendEntries {
         // so follower can redirect clients
         leader_id: domain::node_id::NodeId,
-
+        // index of log entry immediately preceding new ones
+        prev_log_index: usize,
+        // term of prevLogIndex entry
+        prev_log_term: usize,
         // log entries to store (empty for heartbeat; may send more
         // than one for efficiency)
         entries: Vec<server::ServerLogEntry>,
+        // leader’s commitIndex
+        leader_commit: usize,
     },
     RequestVote {
         // candidate requesting vote
