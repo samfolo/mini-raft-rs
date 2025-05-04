@@ -101,6 +101,9 @@ pub async fn run_candidate_actor(
                                             &format!("<- APPEND_ENTRIES (req) {{ \
                                                 term: {request_term}, \
                                                 leader_id: {leader_id}, \
+                                                prev_log_index: {prev_log_index}, \
+                                                prev_log_term: {prev_log_term}, \
+                                                leader_commit: {leader_commit}, \
                                                 entries: {entries:?} \
                                             }}"),
                                         );

@@ -37,11 +37,19 @@ pub async fn run_leader_actor(
 
                 let peer_next_index = match server.get_next_index_for_peer(&peer_id).await {
                     Some(index) => index,
-                    None => bail!("failed to get next index for peer with ID {peer_id}"),
+                    None => bail!("failed to get nextIndex for peer with ID {peer_id}"),
                 };
 
-                let prev_log_index = 0;
-                let prev_log_term = 0;
+                let (prev_log_index, prev_log_term) = if peer_next_index > 0 {
+                    server
+                        .log
+                        .find(|entry| entry.index() == peer_next_index - 1)
+                        .map_or((0, 0), |log_entry| (log_entry.index(), log_entry.term()))
+                } else {
+                    (0, 0)
+                };
+
+                let entries = server.log.entries_from(peer_next_index);
 
                 join_set.spawn(async move {
                     peer_handle
@@ -49,7 +57,7 @@ pub async fn run_leader_actor(
                             server_id,
                             prev_log_index,
                             prev_log_term,
-                            vec![],
+                            entries,
                             leader_commit,
                             current_term,
                         )
@@ -94,6 +102,9 @@ pub async fn run_leader_actor(
                                                 "<- APPEND_ENTRIES (req) {{ \
                                                     term: {request_term}, \
                                                     leader_id: {leader_id}, \
+                                                    prev_log_index: {prev_log_index}, \
+                                                    prev_log_term: {prev_log_term}, \
+                                                    leader_commit: {leader_commit}, \
                                                     entries: {entries:?} \
                                                 }}"
                                             ),
@@ -125,8 +136,21 @@ pub async fn run_leader_actor(
                                             term: {response_term}, \
                                             success: {success} \
                                         }}"));
+                                        let sender_id = res.sender_id();
+
                                         if *success {
-                                            // track the commit tally vector here
+                                            // Eventually nextIndex will reach a point where the leader and follower
+                                            // logs match. When this happens, AppendEntries will succeed, which removes
+                                            // any conflicting entries in the follower’s log and appends entries from
+                                            // the leader’s log (if any). Once `AppendEntries` succeeds, the follower’s
+                                            // log is consistent with the leader’s, and it will remain that way for the
+                                            // rest of the term.
+                                            server.set_commit_index(server.highest_committable_index().await.unwrap_or(0)).await;
+                                            server.set_next_index_for_peer(sender_id, server.log.last().map_or(1, |entry| entry.index() + 1)).await;
+                                        } else {
+                                            // After a rejection, the leader decrements nextIndex and retries the
+                                            // `AppendEntries` RPC
+                                            server.decrement_next_index_for_peer(sender_id).await;
                                         }
                                     },
                                     server::ServerResponseBody::RequestVote { vote_granted } => {
@@ -146,7 +170,13 @@ pub async fn run_leader_actor(
             tokio::select! {
               res = state.changed() => {
                 if let Err(err) = res {
-                  bail!("{:?}", err);
+                    bail!("{:?}", err);
+                }
+
+                if *state.borrow_and_update() == ServerState::Leader {
+                    // When a leader first comes to power, it initializes all nextIndex values to the
+                    // index just after the last one in its log:
+                    server.reinitialise_volatile_state().await;
                 }
               }
               _ = &mut cancelled => {

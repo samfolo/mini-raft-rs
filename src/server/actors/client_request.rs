@@ -34,19 +34,28 @@ pub async fn run_client_request_actor(
                     client::Message::Request(req) => {
                         naive_logging::log(&server.id, &match req.body {
                             client::ClientRequestBody::Read => "<- CLIENT_READ_CMD (req) { }".to_string(),
-                            client::ClientRequestBody::Write { command } => format!("<- CLIENT_WRITE_CMD (req) {{ command: {command} }}")
+                            client::ClientRequestBody::Write { command } => format!(
+                                "<- CLIENT_WRITE_CMD (req) {{ command: {command} }}"
+                            )
                         });
 
                         if *state.borrow_and_update() == ServerState::Leader {
                             match req.body {
                                 client::ClientRequestBody::Read => {
-                                    req.responder.handle_client_read_response(server.id, server.state_machine.get_snapshot()).await?;
+                                    req.responder.handle_client_read_response(
+                                        server.id, server.state_machine.get_snapshot()
+                                    ).await?;
                                 },
                                 client::ClientRequestBody::Write { command } => {
                                     server.append_to_log(command).await;
                                     req.responder.handle_client_write_response(server.id, true).await?;
                                 }
                             }
+
+                            // TODO:
+                            // When the entry has been safely replicated (as described below), the leader
+                            // applies the entry to its state machine and returns the result of that
+                            // execution to the client.
                         } else {
                             let leader_id = server.voted_for().await.unwrap();
                             naive_logging::log(&server.id, &format!(">> forwarding to current leader... {{ \

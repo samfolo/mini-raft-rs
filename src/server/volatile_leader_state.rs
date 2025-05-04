@@ -9,6 +9,8 @@ pub struct VolatileLeaderState {
 }
 
 impl VolatileLeaderState {
+    /// When a leader first comes to power, it initializes all nextIndex values to the index just after
+    /// the last one in its log.
     pub fn new(ids: impl Iterator<Item = node_id::NodeId>, last_log_index: usize) -> Self {
         let mut next_indices = HashMap::new();
         let mut match_indices = HashMap::new();
@@ -28,24 +30,35 @@ impl VolatileLeaderState {
         *self.next_indices.get(id).unwrap()
     }
 
-    pub fn decrement_next_index(&mut self, id: node_id::NodeId) {
-        self.next_indices.entry(id).and_modify(|index| *index -= 1);
+    pub fn set_next_index(&mut self, id: node_id::NodeId, index: usize) {
+        self.next_indices.insert(id, index);
     }
 
+    pub fn decrement_next_index(&mut self, id: node_id::NodeId) {
+        self.next_indices.entry(id).and_modify(|index| {
+            *index = index.saturating_sub(1);
+        });
+    }
+
+    #[allow(dead_code)] // TODO: will use soon
     pub fn get_match_index(&self, id: &node_id::NodeId) -> usize {
         *self.match_indices.get(id).unwrap()
     }
 
+    #[allow(dead_code)] // TODO: will use soon
+    pub fn set_match_index(&mut self, id: node_id::NodeId, index: usize) {
+        self.match_indices.insert(id, index);
+    }
+
+    #[allow(dead_code)] // TODO: will use soon
     pub fn decrement_match_index(&mut self, id: node_id::NodeId) {
-        self.match_indices.entry(id).and_modify(|index| *index -= 1);
+        self.match_indices.entry(id).and_modify(|index| {
+            *index = index.saturating_sub(1);
+        });
     }
 
     pub fn highest_committable_index(&self) -> Option<usize> {
-        let mut indices = self
-            .next_indices
-            .iter()
-            .map(|(_, index)| index)
-            .collect::<Vec<_>>();
+        let mut indices = self.next_indices.values().collect::<Vec<_>>();
 
         indices.sort();
 

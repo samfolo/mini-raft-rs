@@ -69,6 +69,9 @@ pub async fn run_follower_actor(
                                             "<- APPEND_ENTRIES (req) {{ \
                                                 term: {request_term}, \
                                                 leader_id: {leader_id}, \
+                                                prev_log_index: {prev_log_index}, \
+                                                prev_log_term: {prev_log_term}, \
+                                                leader_commit: {leader_commit}, \
                                                 entries: {entries:?} \
                                             }}"
                                         ),
@@ -91,7 +94,34 @@ pub async fn run_follower_actor(
                                         server.set_voted_for(Some(*leader_id)).await;
 
                                         server.set_current_term(|_| request_term).await;
-                                        sender_handle.append_entries_response(server_id, current_term, true).await?;
+
+                                        if *leader_commit > server.commit_index().await {
+                                            let new_commit_index = std::cmp::min(
+                                                *leader_commit,
+                                                entries
+                                                    .last()
+                                                    .map(|entry| entry.index())
+                                                    .unwrap_or(*leader_commit),
+                                            );
+                                            server.set_commit_index(new_commit_index).await;
+                                        }
+
+                                        // When sending an `AppendEntries` RPC, the leader includes the index and
+                                        // term of the entry in its log that immediately precedes the new entries.
+                                        // If the follower does not find an entry in its log with the same index
+                                        // and term, then it refuses the new entries. The consistency check acts
+                                        // as an induction step: the initial empty state of the logs satisfies the
+                                        // Log Matching Property, and the consistency check preserves the Log Matching
+                                        // Property whenever logs are extended. As a result, whenever `AppendEntries`
+                                        // returns successfully, the leader knows that the follower’s log is identical
+                                        // to its own log up through the new entries.
+                                        let success = server.log.find(|entry| {
+                                            entry.index() == *prev_log_index && entry.term() == *prev_log_term
+                                        }).is_some()
+                                            || (!entries.is_empty() && server.log.is_empty());
+
+                                        sender_handle.append_entries_response(server_id, current_term, success).await?;
+
                                     } else {
                                         naive_logging::log(
                                             &server.id,
