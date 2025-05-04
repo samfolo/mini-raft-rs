@@ -116,7 +116,10 @@ impl Server {
 
             // Volatile state on leaders:
             // -----------------------------------------------------
-            leader_state: RwLock::new(None),
+            leader_state: RwLock::new(Some(volatile_leader_state::VolatileLeaderState::new(
+                peer_list.peers_iter().map(|(id, _)| id),
+                0,
+            ))),
 
             // Cluster configuration:
             // -----------------------------------------------------
@@ -196,6 +199,55 @@ impl Server {
     async fn append_to_log(&self, command: state_machine::Command) {
         self.log
             .append_cmd(self.log.len() + 1, self.current_term().await, command);
+    }
+
+    async fn get_next_index_for_peer(&self, id: &node_id::NodeId) -> Option<usize> {
+        self.leader_state
+            .read()
+            .await
+            .as_ref()
+            .map(|leader_state| Some(leader_state.get_next_index(id)))
+            .unwrap_or(None)
+    }
+
+    async fn insert_next_index_for_peer(&self, id: node_id::NodeId, index: usize) -> Option<usize> {
+        self.leader_state
+            .write()
+            .await
+            .as_mut()
+            .map(|leader_state| leader_state.insert_next_index(id, index))
+            .unwrap_or(None)
+    }
+
+    async fn get_match_index_for_peer(&self, id: &node_id::NodeId) -> Option<usize> {
+        self.leader_state
+            .read()
+            .await
+            .as_ref()
+            .map(|leader_state| Some(leader_state.get_match_index(id)))
+            .unwrap_or(None)
+    }
+
+    async fn insert_match_index_for_peer(
+        &self,
+        id: node_id::NodeId,
+        index: usize,
+    ) -> Option<usize> {
+        self.leader_state
+            .write()
+            .await
+            .as_mut()
+            .map(|leader_state| leader_state.insert_match_index(id, index))
+            .unwrap_or(None)
+    }
+
+    async fn highest_committable_index(&self) -> Option<usize> {
+        self.leader_state
+            .read()
+            .await
+            .as_ref()
+            .map(|leader_state| leader_state.highest_committable_index())
+            .unwrap_or(None)
     }
 }
 

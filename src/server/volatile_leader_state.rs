@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::domain::node_id;
 
+#[derive(Debug, Clone)]
 pub struct VolatileLeaderState {
     next_indices: HashMap<node_id::NodeId, usize>,
     match_indices: HashMap<node_id::NodeId, usize>,
