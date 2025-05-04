@@ -4,6 +4,7 @@ mod log;
 mod peer_list;
 mod receiver;
 mod request;
+mod volatile_leader_state;
 
 pub use handle::ServerHandle;
 pub use log::ServerLogEntry;
@@ -49,11 +50,29 @@ pub struct Server {
     /// Each server stores a current term number, which increases
     /// monotonically over time.
     current_term: RwLock<usize>,
+    /// candidateId that received vote in current term (or null
+    /// if none)
     voted_for: RwLock<Option<node_id::NodeId>>,
+    /// log entries; each entry contains command for state
+    /// machine, and term when entry was received by leader.
+    /// (first index is 1)
     log: log::ServerLog,
 
     // Volatile state:
     // -----------------------------------------------------
+    /// index of highest log entry known to be committed
+    /// (initialized to 0, increases monotonically)
+    commit_index: RwLock<usize>,
+
+    #[allow(dead_code)] // TODO: will use soon
+    /// index of highest log entry applied to state machine
+    /// (initialized to 0, increases monotonically)
+    last_applied: RwLock<usize>,
+
+    // Volatile state on leaders:
+    // -----------------------------------------------------
+    /// Reinitialised after every successful election
+    leader_state: RwLock<Option<volatile_leader_state::VolatileLeaderState>>,
 
     // Cluster configuration:
     // -----------------------------------------------------
@@ -94,6 +113,15 @@ impl Server {
 
             // Volatile state:
             // -----------------------------------------------------
+            commit_index: RwLock::new(0),
+            last_applied: RwLock::new(0),
+
+            // Volatile state on leaders:
+            // -----------------------------------------------------
+            leader_state: RwLock::new(Some(volatile_leader_state::VolatileLeaderState::new(
+                peer_list.peers_iter().map(|(id, _)| id),
+                0,
+            ))),
 
             // Cluster configuration:
             // -----------------------------------------------------
@@ -136,6 +164,15 @@ impl Server {
         *val = candidate_id
     }
 
+    pub async fn commit_index(&self) -> usize {
+        *self.commit_index.read().await
+    }
+
+    pub async fn set_commit_index(&self, index: usize) {
+        let mut val = self.commit_index.write().await;
+        *val = index
+    }
+
     /// If a candidate or leader discovers that its term is out of date, it
     /// immediately reverts to follower state.
     fn downgrade_to_follower(&self) -> Result<(), watch::error::SendError<ServerState>> {
@@ -171,8 +208,81 @@ impl Server {
     }
 
     async fn append_to_log(&self, command: state_machine::Command) {
-        self.log
-            .append_cmd(self.log.len() + 1, self.current_term().await, command);
+        self.log.append_cmd(
+            self.log.last().map(|entry| entry.index() + 1).unwrap_or(1),
+            self.current_term().await,
+            command,
+        );
+    }
+
+    async fn reinitialise_volatile_state(&self) {
+        *self.leader_state.write().await = Some(volatile_leader_state::VolatileLeaderState::new(
+            self.peer_list.peers_iter().map(|(id, _)| id),
+            self.log.last().map_or(0, |entry| entry.index()),
+        ));
+    }
+
+    async fn get_next_index_for_peer(&self, id: &node_id::NodeId) -> Option<usize> {
+        self.leader_state
+            .read()
+            .await
+            .as_ref()
+            .map(|leader_state| leader_state.get_next_index(id))
+    }
+
+    async fn set_next_index_for_peer(&self, id: node_id::NodeId, index: usize) {
+        self.leader_state
+            .write()
+            .await
+            .as_mut()
+            .map_or((), |leader_state| leader_state.set_next_index(id, index))
+    }
+
+    async fn decrement_next_index_for_peer(&self, id: node_id::NodeId) {
+        let mut leader_state = self.leader_state.write().await.take();
+
+        if let Some(ref mut state) = leader_state {
+            state.decrement_next_index(id)
+        }
+
+        *self.leader_state.write().await = leader_state;
+    }
+
+    #[allow(dead_code)] // TODO: will use soon
+    async fn get_match_index_for_peer(&self, id: &node_id::NodeId) -> Option<usize> {
+        self.leader_state
+            .read()
+            .await
+            .as_ref()
+            .map(|leader_state| leader_state.get_match_index(id))
+    }
+
+    #[allow(dead_code)] // TODO: will use soon
+    async fn set_match_index_for_peer(&self, id: node_id::NodeId, index: usize) {
+        self.leader_state
+            .write()
+            .await
+            .as_mut()
+            .map_or((), |leader_state| leader_state.set_match_index(id, index))
+    }
+
+    #[allow(dead_code)] // TODO: will use soon
+    async fn decrement_match_index_for_peer(&self, id: node_id::NodeId) {
+        let mut leader_state = self.leader_state.write().await.take();
+
+        if let Some(ref mut state) = leader_state {
+            state.decrement_match_index(id)
+        }
+
+        *self.leader_state.write().await = leader_state;
+    }
+
+    async fn highest_committable_index(&self) -> Option<usize> {
+        self.leader_state
+            .read()
+            .await
+            .as_ref()
+            .and_then(|leader_state| leader_state.highest_committable_index())
     }
 }
 
