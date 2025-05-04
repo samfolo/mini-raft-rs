@@ -64,7 +64,7 @@ impl VolatileLeaderState {
 
         match indices.len() {
             0 => None,
-            len => Some(*indices[len / 2]),
+            len => Some(indices[len / 2].saturating_sub(1)),
         }
     }
 }
@@ -131,14 +131,14 @@ mod tests {
     #[test]
     fn returns_the_highest_committable_index() -> anyhow::Result<()> {
         run_highest_committable_index(&[], None)?;
-        run_highest_committable_index(&[1], Some(1))?;
-        run_highest_committable_index(&[5, 4], Some(5))?;
-        run_highest_committable_index(&[2, 2, 3, 2, 5], Some(2))?;
-        run_highest_committable_index(&[1, 2, 3, 4], Some(3))?;
-        run_highest_committable_index(&[1, 2, 3, 4, 5], Some(3))?;
-        run_highest_committable_index(&[1, 2, 4, 2, 5], Some(2))?;
-        run_highest_committable_index(&[10, 10, 5, 5], Some(10))?;
-        run_highest_committable_index(&[10, 5, 5], Some(5))?;
+        run_highest_committable_index(&[1], Some(1 - 1))?;
+        run_highest_committable_index(&[5, 4], Some(5 - 1))?;
+        run_highest_committable_index(&[2, 2, 3, 2, 5], Some(2 - 1))?;
+        run_highest_committable_index(&[1, 2, 3, 4], Some(3 - 1))?;
+        run_highest_committable_index(&[1, 2, 3, 4, 5], Some(3 - 1))?;
+        run_highest_committable_index(&[1, 2, 4, 2, 5], Some(2 - 1))?;
+        run_highest_committable_index(&[10, 10, 5, 5], Some(10 - 1))?;
+        run_highest_committable_index(&[10, 5, 5], Some(5 - 1))?;
 
         Ok(())
     }

@@ -208,8 +208,11 @@ impl Server {
     }
 
     async fn append_to_log(&self, command: state_machine::Command) {
-        self.log
-            .append_cmd(self.log.len() + 1, self.current_term().await, command);
+        self.log.append_cmd(
+            self.log.last().map(|entry| entry.index() + 1).unwrap_or(1),
+            self.current_term().await,
+            command,
+        );
     }
 
     async fn reinitialise_volatile_state(&self) {

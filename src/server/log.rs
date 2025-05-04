@@ -10,13 +10,6 @@ pub struct ServerLog {
 }
 
 impl ServerLog {
-    pub fn len(&self) -> usize {
-        match self.entries.read() {
-            Ok(entries) => entries.len(),
-            Err(err) => panic!("failed to read log entries: {err:?}"),
-        }
-    }
-
     pub fn is_empty(&self) -> bool {
         match self.entries.read() {
             Ok(entries) => entries.is_empty(),
@@ -27,13 +20,17 @@ impl ServerLog {
     pub fn entries_from(&self, target_index: usize) -> Vec<ServerLogEntry> {
         match self.entries.read() {
             Ok(entries) => {
-                let start_index = entries
-                    .iter()
-                    .enumerate()
-                    .find_map(|(idx, entry)| (entry.index == target_index).then_some(idx))
-                    .unwrap_or(0);
+                if entries.is_empty() {
+                    entries.to_vec()
+                } else {
+                    let start_index = entries
+                        .iter()
+                        .enumerate()
+                        .find_map(|(idx, entry)| (entry.index == target_index).then_some(idx))
+                        .unwrap_or(entries.len() - 1);
 
-                entries[start_index..].to_vec()
+                    entries[start_index..].to_vec()
+                }
             }
             Err(err) => panic!("failed to read log entries: {err:?}"),
         }
