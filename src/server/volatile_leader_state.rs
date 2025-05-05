@@ -36,7 +36,9 @@ impl VolatileLeaderState {
 
     pub fn decrement_next_index(&mut self, id: node_id::NodeId) {
         self.next_indices.entry(id).and_modify(|index| {
-            *index = index.saturating_sub(1);
+            if *index > 1 {
+                *index -= 1;
+            }
         });
     }
 
@@ -53,10 +55,43 @@ impl VolatileLeaderState {
     #[allow(dead_code)] // TODO: will use soon
     pub fn decrement_match_index(&mut self, id: node_id::NodeId) {
         self.match_indices.entry(id).and_modify(|index| {
-            *index = index.saturating_sub(1);
+            if *index > 1 {
+                *index -= 1;
+            }
         });
     }
 
+    /// The highest committable index is the integer just before the highest `next_index` value
+    /// across all IDs.
+    ///
+    /// Using `&[1, 2, 2, 2, 3]` as an example:
+    ///
+    /// `&[1, 2, 2, 2, 3]` will be converted into a `HashMap` of IDs to each entry in the slice.
+    /// Each entry represents the `next_index` for that ID, i.e. the index just after the last
+    /// known replicated log index, used as the starting point for the next set of values the
+    /// leader will send over to the node with that particular ID.
+    ///
+    /// The highest committable index is the value which can be accounted for across the majority
+    /// of all others. To illustrate visually:
+    ///
+    /// ```no_run
+    /// leader ->   (3)     followers ->                           (3)
+    ///              |                                              |
+    ///             (2)               ->         (2)   (2)   (2)   (2)
+    ///              |                            |     |     |     |
+    ///             (1)               ->   (1)   (1)   (1)   (1)   (1)
+    ///              •                      •     •     •     •     •
+    ///             ID0                    ID1   ID2   ID3   ID4   ID5
+    /// ```
+    ///
+    /// Above you can see that whilst the leader and every follower covers index `1`, we can still
+    /// get majority coverage at index 2.  Index 3 is only overed by the leadeer and one follower,
+    /// so cannot count as the highest index covered by the majority.
+    ///
+    /// We then need to subtract 1 from the highest majority index, as the values in the map have
+    /// been incremented by 1.  In this case, the majority can be described as being "ready to
+    /// receive new entries starting from index 2", meaning they have confirmed all values up to
+    /// index 1, and so we return 1 as our value.
     pub fn highest_committable_index(&self) -> Option<usize> {
         let mut indices = self.next_indices.values().collect::<Vec<_>>();
 
@@ -133,6 +168,7 @@ mod tests {
         run_highest_committable_index(&[], None)?;
         run_highest_committable_index(&[1], Some(1 - 1))?;
         run_highest_committable_index(&[5, 4], Some(5 - 1))?;
+        run_highest_committable_index(&[1, 2, 2, 2, 3], Some(2 - 1))?;
         run_highest_committable_index(&[2, 2, 3, 2, 5], Some(2 - 1))?;
         run_highest_committable_index(&[1, 2, 3, 4], Some(3 - 1))?;
         run_highest_committable_index(&[1, 2, 3, 4, 5], Some(3 - 1))?;

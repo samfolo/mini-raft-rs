@@ -17,20 +17,18 @@ impl ServerLog {
         }
     }
 
-    // usage is not well enough understood. verify. are you sure of `.unwrap_or(entries.len() - 1)`?
     pub fn entries_from(&self, target_index: usize) -> Vec<ServerLogEntry> {
         match self.entries.read() {
             Ok(entries) => {
                 if entries.is_empty() {
                     entries.to_vec()
                 } else {
-                    let start_index = entries
+                    entries
                         .iter()
                         .enumerate()
                         .find_map(|(idx, entry)| (entry.index == target_index).then_some(idx))
-                        .unwrap_or(entries.len() - 1);
-
-                    entries[start_index..].to_vec()
+                        .and_then(|index| Some(entries[index..].to_vec()))
+                        .unwrap_or(vec![])
                 }
             }
             Err(err) => panic!("failed to read log entries: {err:?}"),
