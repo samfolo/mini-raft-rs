@@ -74,7 +74,7 @@ impl VolatileLeaderState {
     /// The highest committable index is the value which can be accounted for across the majority
     /// of all others. To illustrate visually:
     ///
-    /// ```no_run
+    /// ```ignore
     /// leader ->   (3)     followers ->                           (3)
     ///              |                                              |
     ///             (2)               ->         (2)   (2)   (2)   (2)

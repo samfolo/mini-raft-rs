@@ -27,7 +27,7 @@ impl ServerLog {
                         .iter()
                         .enumerate()
                         .find_map(|(idx, entry)| (entry.index == target_index).then_some(idx))
-                        .and_then(|index| Some(entries[index..].to_vec()))
+                        .map(|index| entries[index..].to_vec())
                         .unwrap_or(vec![])
                 }
             }
